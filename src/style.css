@@ -217,6 +217,27 @@ button:disabled {
   width: 92px;
 }
 
+.level-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.level-btn {
+  min-width: 34px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff7eb;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.level-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
 .result-card {
   border: 1px solid #d9ccb8;
   border-left: 4px solid var(--accent);

@@ -217,6 +217,17 @@ function armorAllowed(piece: ArmorPiece): boolean {
   return true;
 }
 
+function isWeaponSkillKind(kind: string | undefined): boolean {
+  return (kind ?? "").toLowerCase() === "weapon";
+}
+
+function isSelectableRequestedSkillId(skillId: number): boolean {
+  if (!state.data) {
+    return false;
+  }
+  return !isWeaponSkillKind(state.data.skillsById[skillId]?.kind);
+}
+
 const numberFormatter = new Intl.NumberFormat("en-US");
 function formatCount(value: number): string {
   return numberFormatter.format(Math.max(0, Math.floor(value)));
@@ -331,7 +342,10 @@ function renderDataStatus(): void {
 function renderSkillList(): void {
   if (!state.data) return;
   const q = state.skillSearch.toLowerCase();
-  const list = state.data.skills.filter((skill) => skill.name.toLowerCase().includes(q)).slice(0, 120);
+  const list = state.data.skills
+    .filter((skill) => !isWeaponSkillKind(skill.kind))
+    .filter((skill) => skill.name.toLowerCase().includes(q))
+    .slice(0, 120);
   el.skillList.innerHTML = list
     .map((skill) => `<option value="${skill.id}">${esc(skill.name)} (max ${skill.maxLevel})</option>`)
     .join("");
@@ -346,12 +360,21 @@ function renderDesired(): void {
     el.desiredList.innerHTML = `<p class="muted">No target skills selected.</p>`;
     return;
   }
-  el.desiredList.innerHTML = `<table class="simple-table"><thead><tr><th>Skill</th><th>Target</th><th></th></tr></thead><tbody>${
+  el.desiredList.innerHTML = `<table class="simple-table"><thead><tr><th>Skill</th><th>Target Level</th><th></th></tr></thead><tbody>${
     state.desired
       .map((d) => {
         const skill = state.data!.skillsById[d.skillId];
         if (!skill) return "";
-        return `<tr><td>${esc(skill.name)}</td><td><input class="target" data-skill-id="${d.skillId}" type="number" min="1" max="${skill.maxLevel}" value="${d.level}"/></td><td><button class="remove" data-skill-id="${d.skillId}" type="button">Remove</button></td></tr>`;
+        const levelButtonCount = Math.max(5, skill.maxLevel);
+        const levelButtons = Array.from({ length: levelButtonCount }, (_, index) => {
+          const level = index + 1;
+          const selectable = level <= skill.maxLevel;
+          const active = selectable && d.level === level;
+          const classNames = ["level-btn"];
+          if (active) classNames.push("active");
+          return `<button type="button" class="${classNames.join(" ")}" data-skill-id="${d.skillId}" data-level="${level}" ${selectable ? "" : "disabled"}>${level}</button>`;
+        }).join("");
+        return `<tr><td>${esc(skill.name)}</td><td><div class="level-picker">${levelButtons}</div></td><td><button class="remove" data-skill-id="${d.skillId}" type="button">Remove</button></td></tr>`;
       })
       .join("")
   }</tbody></table>`;
@@ -510,7 +533,7 @@ function refreshDerived(): void {
   const seen = new Set<number>();
   for (const d of state.desired) {
     const skill = state.data.skillsById[d.skillId];
-    if (!skill || seen.has(d.skillId)) continue;
+    if (!skill || isWeaponSkillKind(skill.kind) || seen.has(d.skillId)) continue;
     seen.add(d.skillId);
     normalized.push({ skillId: d.skillId, level: Math.max(1, Math.min(skill.maxLevel, d.level)) });
   }
@@ -722,6 +745,7 @@ el.addSkill.addEventListener("click", () => {
   const option = el.skillList.selectedOptions[0];
   const id = Number.parseInt(option?.value || "", 10);
   if (Number.isNaN(id) || state.desired.some((d) => d.skillId === id)) return;
+  if (!isSelectableRequestedSkillId(id)) return;
   const max = state.data.skillsById[id]?.maxLevel || 1;
   state.desired.push({ skillId: id, level: Math.min(1, max) });
   renderDesired();
@@ -729,18 +753,32 @@ el.addSkill.addEventListener("click", () => {
 el.skillList.addEventListener("dblclick", () => el.addSkill.click());
 el.desiredList.addEventListener("click", (ev) => {
   const t = ev.target as HTMLElement;
-  if (!(t instanceof HTMLButtonElement) || !t.classList.contains("remove")) return;
-  const id = Number.parseInt(t.dataset.skillId || "", 10);
-  state.desired = state.desired.filter((d) => d.skillId !== id);
+  if (!(t instanceof HTMLButtonElement)) return;
+
+  if (t.classList.contains("remove")) {
+    const id = Number.parseInt(t.dataset.skillId || "", 10);
+    state.desired = state.desired.filter((d) => d.skillId !== id);
+    renderDesired();
+    return;
+  }
+
+  if (!t.classList.contains("level-btn") || !state.data) {
+    return;
+  }
+  const skillId = Number.parseInt(t.dataset.skillId || "", 10);
+  const nextLevel = Number.parseInt(t.dataset.level || "", 10);
+  if (Number.isNaN(skillId) || Number.isNaN(nextLevel)) {
+    return;
+  }
+  const skill = state.data.skillsById[skillId];
+  if (!skill) {
+    return;
+  }
+  const clampedLevel = Math.max(1, Math.min(skill.maxLevel, nextLevel));
+  state.desired = state.desired.map((desired) =>
+    desired.skillId === skillId ? { skillId, level: clampedLevel } : desired,
+  );
   renderDesired();
-});
-el.desiredList.addEventListener("change", (ev) => {
-  if (!(ev.target instanceof HTMLInputElement) || !ev.target.classList.contains("target") || !state.data) return;
-  const id = Number.parseInt(ev.target.dataset.skillId || "", 10);
-  const skill = state.data.skillsById[id];
-  if (!skill) return;
-  const next = clampInt(ev.target.value, 1, 1, skill.maxLevel);
-  state.desired = state.desired.map((d) => (d.skillId === id ? { skillId: id, level: next } : d));
 });
 el.armorDecoOnly.addEventListener("change", () => (state.armorDecoOnly = el.armorDecoOnly.checked));
 el.decoSearch.addEventListener("input", () => {

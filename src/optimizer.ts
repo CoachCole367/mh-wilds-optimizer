@@ -325,9 +325,6 @@ function buildDecorationData(
   }
 
   for (const decoration of allDecorations) {
-    if (decoration.kind !== "armor") {
-      continue;
-    }
     if (!useAllDecorations && !allowedSet.has(decoration.id)) {
       continue;
     }

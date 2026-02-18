@@ -224,12 +224,23 @@ function isSelectableRequestedSkillId(skillId: number): boolean {
   return !isWeaponSkillKind(state.data.skillsById[skillId]?.kind);
 }
 
-function getArmorDecorations(data: NormalizedData): NormalizedData["decorations"] {
-  return data.decorations.filter((decoration) => decoration.kind === "armor");
-}
-
 function simplifyDecorationDisplayName(name: string): string {
   return name.replace(/\s*\[\d+\]\s*$/, "");
+}
+
+function decorationKindLabel(kind: string): string {
+  if (kind.toLowerCase() === "armor") return "Armor";
+  if (kind.toLowerCase() === "weapon") return "Weapon";
+  return kind;
+}
+
+function formatDecorationLabel(decoration: NormalizedData["decorations"][number], data: NormalizedData): string {
+  const skillText = Object.entries(decoration.skills)
+    .map(([id, level]) => `${data.skillsById[Number(id)]?.name || `Skill #${id}`} +${level}`)
+    .join(", ");
+  const decorationName = simplifyDecorationDisplayName(decoration.name);
+  const metaText = `S${decoration.slotReq}, ${decorationKindLabel(decoration.kind)}`;
+  return skillText.length > 0 ? `${decorationName} (${metaText}) - ${skillText}` : `${decorationName} (${metaText})`;
 }
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -386,16 +397,15 @@ function renderDesired(): void {
 function renderDecoList(): void {
   if (!state.data) return;
   const q = state.decoSearch.toLowerCase();
-  const armorDecorations = getArmorDecorations(state.data);
-  const list = armorDecorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
+  const list = state.data.decorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
   el.decoList.innerHTML = list
     .map((d) => `<option value="${d.id}"${state.selectedDecos.has(d.id) ? " selected" : ""}>${esc(decoLabel[d.id] || d.name)}</option>`)
     .join("");
-  const selectedArmorDecorationCount = armorDecorations.reduce(
+  const selectedDecorationCount = state.data.decorations.reduce(
     (count, decoration) => count + (state.selectedDecos.has(decoration.id) ? 1 : 0),
     0,
   );
-  el.decoSummary.textContent = `Selected ${selectedArmorDecorationCount}/${armorDecorations.length} armor decorations`;
+  el.decoSummary.textContent = `Selected ${selectedDecorationCount}/${state.data.decorations.length} decorations`;
 }
 
 function skillChips(points: SkillPoints): string {
@@ -531,14 +541,13 @@ function renderResults(): void {
 
 function refreshDerived(): void {
   if (!state.data) return;
-  const armorDecorations = getArmorDecorations(state.data);
-  for (const d of armorDecorations) {
-    const skillText = Object.entries(d.skills)
+  for (const decoration of state.data.decorations) {
+    const skillText = Object.entries(decoration.skills)
       .map(([id, level]) => `${state.data!.skillsById[Number(id)]?.name || `Skill #${id}`} +${level}`)
       .join(", ");
-    const decorationName = simplifyDecorationDisplayName(d.name);
-    decoLabel[d.id] = skillText.length > 0 ? `${decorationName} - ${skillText}` : decorationName;
-    decoSearch[d.id] = `${d.name} ${skillText}`.toLowerCase();
+    decoLabel[decoration.id] = formatDecorationLabel(decoration, state.data);
+    decoSearch[decoration.id] =
+      `${decoration.name} ${simplifyDecorationDisplayName(decoration.name)} s${decoration.slotReq} ${decoration.kind} ${skillText}`.toLowerCase();
   }
   const normalized: DesiredSkill[] = [];
   const seen = new Set<number>();
@@ -549,16 +558,14 @@ function refreshDerived(): void {
     normalized.push({ skillId: d.skillId, level: Math.max(1, Math.min(skill.maxLevel, d.level)) });
   }
   state.desired = normalized;
-  const armorDecorationIdSet = new Set(armorDecorations.map((decoration) => decoration.id));
+  const decorationIdSet = new Set(state.data.decorations.map((decoration) => decoration.id));
   if (state.useAllDecos && state.selectedDecos.size === 0) {
-    state.selectedDecos = new Set(armorDecorationIdSet);
+    state.selectedDecos = new Set(decorationIdSet);
   } else {
-    state.selectedDecos = new Set([...state.selectedDecos].filter((id) => armorDecorationIdSet.has(id)));
+    state.selectedDecos = new Set([...state.selectedDecos].filter((id) => decorationIdSet.has(id)));
   }
 
-  if (armorDecorations.length > 0 && state.selectedDecos.size === armorDecorations.length) {
-    state.useAllDecos = true;
-  }
+  state.useAllDecos = state.data.decorations.length > 0 && state.selectedDecos.size === state.data.decorations.length;
 }
 
 type WorkerBase = Omit<OptimizeWorkerRequest, "allowedHeadIds">;
@@ -804,7 +811,7 @@ el.decoSearch.addEventListener("input", () => {
 el.decoAll.addEventListener("click", () => {
   if (!state.data) return;
   state.useAllDecos = true;
-  state.selectedDecos = new Set(getArmorDecorations(state.data).map((d) => d.id));
+  state.selectedDecos = new Set(state.data.decorations.map((d) => d.id));
   renderDecoList();
 });
 el.decoNone.addEventListener("click", () => {
@@ -821,8 +828,7 @@ el.decoList.addEventListener("change", () => {
     if (option.selected) state.selectedDecos.add(id);
     else state.selectedDecos.delete(id);
   }
-  const armorDecorationCount = getArmorDecorations(state.data).length;
-  state.useAllDecos = state.selectedDecos.size === armorDecorationCount;
+  state.useAllDecos = state.selectedDecos.size === state.data.decorations.length;
   renderDecoList();
 });
 el.allowAlpha.addEventListener("change", () => (state.allowAlpha = el.allowAlpha.checked));

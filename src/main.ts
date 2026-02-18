@@ -30,7 +30,6 @@ type State = {
   desired: DesiredSkill[];
   allowAlpha: boolean;
   allowGamma: boolean;
-  armorDecoOnly: boolean;
   useAllDecos: boolean;
   selectedDecos: Set<number>;
   threads: number;
@@ -75,7 +74,6 @@ root.innerHTML = `
     </div>
     <div class="pane">
       <h2>Decoration Pool</h2>
-      <label class="checkbox-line"><input id="armor-deco-only" type="checkbox"/><span>Armor decorations only</span></label>
       <label class="field"><span>Search</span><input id="deco-search" type="search" placeholder="Decoration name"/></label>
       <div class="button-row"><button id="deco-all" type="button">Select All</button><button id="deco-none" type="button">Clear All</button></div>
       <select id="deco-list" multiple size="10"></select>
@@ -115,7 +113,6 @@ const el = {
   skillList: document.querySelector<HTMLSelectElement>("#skill-list")!,
   addSkill: document.querySelector<HTMLButtonElement>("#add-skill")!,
   desiredList: document.querySelector<HTMLDivElement>("#desired-list")!,
-  armorDecoOnly: document.querySelector<HTMLInputElement>("#armor-deco-only")!,
   decoSearch: document.querySelector<HTMLInputElement>("#deco-search")!,
   decoAll: document.querySelector<HTMLButtonElement>("#deco-all")!,
   decoNone: document.querySelector<HTMLButtonElement>("#deco-none")!,
@@ -152,7 +149,6 @@ const state: State = {
   desired: parseDesired(params.get("ds")),
   allowAlpha: parseBool(params.get("aa"), true),
   allowGamma: parseBool(params.get("ag"), true),
-  armorDecoOnly: parseBool(params.get("ad"), false),
   useAllDecos: !decoParam || decoParam === "all",
   selectedDecos: decoParam && decoParam !== "all" ? parseIdSet(decoParam) : new Set<number>(),
   threads: clampInt(params.get("t"), DEFAULT_THREADS, 1, MAX_THREADS),
@@ -226,6 +222,14 @@ function isSelectableRequestedSkillId(skillId: number): boolean {
     return false;
   }
   return !isWeaponSkillKind(state.data.skillsById[skillId]?.kind);
+}
+
+function getArmorDecorations(data: NormalizedData): NormalizedData["decorations"] {
+  return data.decorations.filter((decoration) => decoration.kind === "armor");
+}
+
+function simplifyDecorationDisplayName(name: string): string {
+  return name.replace(/\s*\[\d+\]\s*$/, "");
 }
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -303,7 +307,6 @@ function renderProgress(): void {
 
 function rerender(): void {
   el.locale.value = state.locale;
-  el.armorDecoOnly.checked = state.armorDecoOnly;
   el.allowAlpha.checked = state.allowAlpha;
   el.allowGamma.checked = state.allowGamma;
   el.threads.value = String(state.threads);
@@ -383,11 +386,16 @@ function renderDesired(): void {
 function renderDecoList(): void {
   if (!state.data) return;
   const q = state.decoSearch.toLowerCase();
-  const list = state.data.decorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
+  const armorDecorations = getArmorDecorations(state.data);
+  const list = armorDecorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
   el.decoList.innerHTML = list
     .map((d) => `<option value="${d.id}"${state.selectedDecos.has(d.id) ? " selected" : ""}>${esc(decoLabel[d.id] || d.name)}</option>`)
     .join("");
-  el.decoSummary.textContent = `Selected ${state.selectedDecos.size}/${state.data.decorations.length}`;
+  const selectedArmorDecorationCount = armorDecorations.reduce(
+    (count, decoration) => count + (state.selectedDecos.has(decoration.id) ? 1 : 0),
+    0,
+  );
+  el.decoSummary.textContent = `Selected ${selectedArmorDecorationCount}/${armorDecorations.length} armor decorations`;
 }
 
 function skillChips(points: SkillPoints): string {
@@ -429,7 +437,8 @@ function groupedDecorations(placements: BuildResult["placements"]): string {
 
   const grouped = new Map<string, { slotSize: number; name: string; count: number }>();
   for (const placement of placements) {
-    const name = state.data!.decorationsById[placement.decorationId]?.name || `Decoration #${placement.decorationId}`;
+    const rawName = state.data!.decorationsById[placement.decorationId]?.name || `Decoration #${placement.decorationId}`;
+    const name = simplifyDecorationDisplayName(rawName);
     const key = `${placement.slotSizeUsed}-${placement.decorationId}`;
     const existing = grouped.get(key);
     if (existing) {
@@ -522,11 +531,13 @@ function renderResults(): void {
 
 function refreshDerived(): void {
   if (!state.data) return;
-  for (const d of state.data.decorations) {
+  const armorDecorations = getArmorDecorations(state.data);
+  for (const d of armorDecorations) {
     const skillText = Object.entries(d.skills)
       .map(([id, level]) => `${state.data!.skillsById[Number(id)]?.name || `Skill #${id}`} +${level}`)
       .join(", ");
-    decoLabel[d.id] = `${d.name} [S${d.slotReq}] - ${skillText}`;
+    const decorationName = simplifyDecorationDisplayName(d.name);
+    decoLabel[d.id] = skillText.length > 0 ? `${decorationName} - ${skillText}` : decorationName;
     decoSearch[d.id] = `${d.name} ${skillText}`.toLowerCase();
   }
   const normalized: DesiredSkill[] = [];
@@ -538,8 +549,16 @@ function refreshDerived(): void {
     normalized.push({ skillId: d.skillId, level: Math.max(1, Math.min(skill.maxLevel, d.level)) });
   }
   state.desired = normalized;
-  if (state.useAllDecos && state.selectedDecos.size === 0) state.selectedDecos = new Set(state.data.decorations.map((d) => d.id));
-  else state.selectedDecos = new Set([...state.selectedDecos].filter((id) => state.data!.decorationsById[id]));
+  const armorDecorationIdSet = new Set(armorDecorations.map((decoration) => decoration.id));
+  if (state.useAllDecos && state.selectedDecos.size === 0) {
+    state.selectedDecos = new Set(armorDecorationIdSet);
+  } else {
+    state.selectedDecos = new Set([...state.selectedDecos].filter((id) => armorDecorationIdSet.has(id)));
+  }
+
+  if (armorDecorations.length > 0 && state.selectedDecos.size === armorDecorations.length) {
+    state.useAllDecos = true;
+  }
 }
 
 type WorkerBase = Omit<OptimizeWorkerRequest, "allowedHeadIds">;
@@ -605,7 +624,6 @@ function shareUrl(): string {
   if (state.desired.length) p.set("ds", [...state.desired].sort((a, b) => a.skillId - b.skillId).map((d) => `${d.skillId}-${d.level}`).join(","));
   p.set("aa", state.allowAlpha ? "1" : "0");
   p.set("ag", state.allowGamma ? "1" : "0");
-  p.set("ad", state.armorDecoOnly ? "1" : "0");
   p.set("t", String(state.threads));
   p.set("r", String(state.resultsPerThread));
   const selected = [...state.selectedDecos].sort((a, b) => a - b);
@@ -679,7 +697,6 @@ async function optimize(): Promise<void> {
       desiredSkills: state.desired,
       allowAlpha: state.allowAlpha,
       allowGamma: state.allowGamma,
-      armorDecorationsOnly: state.armorDecoOnly,
       useAllDecorations: state.useAllDecos,
       allowedDecorationIds: state.useAllDecos ? [] : [...state.selectedDecos].sort((a, b) => a - b),
       maxResults: state.resultsPerThread,
@@ -780,7 +797,6 @@ el.desiredList.addEventListener("click", (ev) => {
   );
   renderDesired();
 });
-el.armorDecoOnly.addEventListener("change", () => (state.armorDecoOnly = el.armorDecoOnly.checked));
 el.decoSearch.addEventListener("input", () => {
   state.decoSearch = el.decoSearch.value;
   renderDecoList();
@@ -788,7 +804,7 @@ el.decoSearch.addEventListener("input", () => {
 el.decoAll.addEventListener("click", () => {
   if (!state.data) return;
   state.useAllDecos = true;
-  state.selectedDecos = new Set(state.data.decorations.map((d) => d.id));
+  state.selectedDecos = new Set(getArmorDecorations(state.data).map((d) => d.id));
   renderDecoList();
 });
 el.decoNone.addEventListener("click", () => {
@@ -805,7 +821,8 @@ el.decoList.addEventListener("change", () => {
     if (option.selected) state.selectedDecos.add(id);
     else state.selectedDecos.delete(id);
   }
-  state.useAllDecos = state.selectedDecos.size === state.data.decorations.length;
+  const armorDecorationCount = getArmorDecorations(state.data).length;
+  state.useAllDecos = state.selectedDecos.size === armorDecorationCount;
   renderDecoList();
 });
 el.allowAlpha.addEventListener("change", () => (state.allowAlpha = el.allowAlpha.checked));

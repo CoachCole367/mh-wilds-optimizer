@@ -314,7 +314,6 @@ function buildDecorationData(
   requestedSkillIds: number[],
   useAllDecorations: boolean,
   allowedDecorationIds: number[],
-  armorDecorationsOnly: boolean,
 ): DecorationData {
   const requestedSkillSet = new Set(requestedSkillIds);
   const allowedSet = new Set(allowedDecorationIds);
@@ -326,7 +325,7 @@ function buildDecorationData(
   }
 
   for (const decoration of allDecorations) {
-    if (armorDecorationsOnly && decoration.kind !== "armor") {
+    if (decoration.kind !== "armor") {
       continue;
     }
     if (!useAllDecorations && !allowedSet.has(decoration.id)) {
@@ -826,7 +825,6 @@ export function optimizeBuilds(
     requestedSkillIds,
     request.useAllDecorations,
     request.allowedDecorationIds,
-    request.armorDecorationsOnly,
   );
 
   for (const skillId of requestedSkillIds) {

@@ -112,7 +112,6 @@ export type OptimizeWorkerRequest = {
   desiredSkills: DesiredSkill[];
   allowAlpha: boolean;
   allowGamma: boolean;
-  armorDecorationsOnly: boolean;
   useAllDecorations: boolean;
   allowedDecorationIds: number[];
   maxResults: number;

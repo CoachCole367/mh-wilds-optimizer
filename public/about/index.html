@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>About | MH Wilds Skill-First Gear Optimizer</title>
+    <meta
+      name="description"
+      content="About the MH Wilds Skill-First Gear Optimizer: data sources, scope, and how build ranking works."
+    />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/about/" />
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        line-height: 1.65;
+        color: #1f1f1f;
+        background: #f8f5ee;
+      }
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 2rem 1rem 3rem;
+      }
+      h1,
+      h2 {
+        line-height: 1.25;
+      }
+      .muted {
+        color: #565656;
+      }
+      a {
+        color: #0d5f54;
+      }
+      .nav {
+        margin-top: 1.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>About MH Wilds Skill-First Gear Optimizer</h1>
+      <p>
+        MH Wilds Skill-First Gear Optimizer is a web tool for planning armor builds in Monster Hunter
+        Wilds by targeting skills first. You choose the skills and levels you want, apply filters such
+        as alpha or gamma armor, and the optimizer searches for valid armor, charm, and decoration
+        combinations.
+      </p>
+      <h2>Data Source</h2>
+      <p>
+        Build data comes from MHDB Wilds API endpoints for armor, armor sets, skills, decorations, and
+        charms. The app fetches and caches data client-side, then runs optimization logic in web workers
+        for responsiveness.
+      </p>
+      <h2>Ranking</h2>
+      <p>
+        Returned builds must meet all requested skill targets. Results are then ranked by highest max
+        defense, highest leftover slot capacity, and lowest wasted requested skill points.
+      </p>
+      <p class="muted">Not affiliated with Capcom.</p>
+      <p class="nav"><a href="/">Home</a> | <a href="/faq/">FAQ</a></p>
+    </main>
+  </body>
+</html>

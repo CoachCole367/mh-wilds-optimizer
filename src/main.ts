@@ -56,6 +56,21 @@ root.innerHTML = `
     <h1>Skill-First Gear Optimizer</h1>
   </header>
 
+  <section class="panel info-panel">
+    <h2>What This Optimizer Does</h2>
+    <p>
+      This tool finds armor builds for Monster Hunter Wilds based on your selected skill targets. It
+      combines armor pieces, charm ranks, and decoration placements to find valid setups that meet your
+      requested levels, then ranks them by defense and slot efficiency.
+    </p>
+    <p>
+      Use the skill picker, adjust alpha and gamma armor filters, choose your allowed decorations, and
+      run optimization in multiple worker threads. Each result includes gear pieces, requested skill
+      totals, defense values, resistances, and used decorations.
+    </p>
+    <p class="info-links"><a href="/about/">About</a> | <a href="/faq/">FAQ</a></p>
+  </section>
+
   <section class="panel">
     <div class="panel-title-row"><h2>Data</h2><button id="refresh-data" type="button">Refresh Data</button></div>
     <div class="inline-grid">
@@ -84,8 +99,8 @@ root.innerHTML = `
   <section class="panel">
     <h2>Controls</h2>
     <div class="inline-grid">
-      <label class="checkbox-line"><input id="allow-alpha" type="checkbox"/><span>Allow α armor</span></label>
-      <label class="checkbox-line"><input id="allow-gamma" type="checkbox"/><span>Allow γ armor</span></label>
+      <label class="checkbox-line"><input id="allow-alpha" type="checkbox"/><span>Allow &alpha; armor</span></label>
+      <label class="checkbox-line"><input id="allow-gamma" type="checkbox"/><span>Allow &gamma; armor</span></label>
       <label class="field"><span>Max Threads</span><input id="threads" type="number" min="1" max="16"/></label>
       <label class="field"><span>Max Results Per Thread</span><input id="results-per-thread" type="number" min="1" max="200"/></label>
     </div>
@@ -102,7 +117,7 @@ root.innerHTML = `
   </section>
 
   <section class="panel"><h2>Results</h2><div id="results"></div></section>
-  <footer class="footer-note">Not affiliated with Capcom.</footer>
+  <footer class="footer-note">Not affiliated with Capcom. <a href="/about/">About</a> | <a href="/faq/">FAQ</a></footer>
 </div>`;
 
 const el = {

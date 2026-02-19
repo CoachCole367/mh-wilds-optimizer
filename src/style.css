@@ -78,6 +78,23 @@ body {
   font-size: 1.05rem;
 }
 
+.info-panel p {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.info-panel .info-links {
+  margin-top: 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+}
+
+.info-panel a {
+  color: var(--accent-2);
+}
+
 .panel-title-row {
   display: flex;
   gap: 10px;
@@ -425,6 +442,10 @@ button:disabled {
   font-size: 0.78rem;
   letter-spacing: 0.03em;
   padding-top: 4px;
+}
+
+.footer-note a {
+  color: inherit;
 }
 
 @media (min-width: 920px) {

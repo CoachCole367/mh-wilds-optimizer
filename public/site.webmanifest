@@ -1,0 +1,15 @@
+{
+  "name": "MH Wilds Skill-First Gear Optimizer",
+  "short_name": "MHW Optimizer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2ede0",
+  "theme_color": "#e9e3d5",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

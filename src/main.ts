@@ -457,11 +457,10 @@ function requestedSkillChecklist(points: SkillPoints): string {
 
 type PieceKey = "head" | "chest" | "arms" | "waist" | "legs" | "charm";
 type PlannedSlot = { slotSize: number; decoName: string | null };
+type PieceSlotPlan = { key: PieceKey; label: string; name: string; slots: PlannedSlot[] };
 
-function pieceDecorationPlacement(result: BuildResult): string {
-  if (!state.data) {
-    return `<p class="muted">No decoration data.</p>`;
-  }
+function buildPieceSlotPlans(result: BuildResult): PieceSlotPlan[] {
+  if (!state.data) return [];
 
   const pieceOrder: PieceKey[] = ["head", "chest", "arms", "waist", "legs", "charm"];
   const pieceLabel: Record<PieceKey, string> = {
@@ -537,22 +536,46 @@ function pieceDecorationPlacement(result: BuildResult): string {
     }
   }
 
-  const rows = pieceOrder
-    .map((piece) => {
-      const slotCells = slotsByPiece[piece]
-        .map((slot) => {
-          if (slot.decoName === null) {
-            return `<span class="slot-pill empty">S${slot.slotSize} Empty</span>`;
-          }
-          return `<span class="slot-pill filled">S${slot.slotSize} ${esc(slot.decoName)}</span>`;
-        })
-        .join("");
-      const slotContent = slotCells.length > 0 ? slotCells : `<span class="slot-pill empty">No slots</span>`;
-      return `<tr><td>${pieceLabel[piece]}</td><td>${esc(pieceNames[piece])}</td><td><div class="piece-slot-list">${slotContent}</div></td></tr>`;
+  return pieceOrder.map((piece) => ({
+    key: piece,
+    label: pieceLabel[piece],
+    name: pieceNames[piece],
+    slots: slotsByPiece[piece],
+  }));
+}
+
+function renderGearWithDecorations(result: BuildResult): string {
+  const plans = buildPieceSlotPlans(result);
+  if (plans.length === 0) {
+    return `<p class="muted">No gear data.</p>`;
+  }
+
+  return plans
+    .map((plan) => {
+      const slotRows =
+        plan.slots.length > 0
+          ? plan.slots
+              .map((slot) => {
+                if (slot.decoName === null) {
+                  return `<li><span class="slot-pill empty">S${slot.slotSize} Empty</span></li>`;
+                }
+                return `<li><span class="slot-pill filled">S${slot.slotSize} ${esc(slot.decoName)}</span></li>`;
+              })
+              .join("")
+          : `<li><span class="slot-pill empty">No slots</span></li>`;
+
+      return `
+<details class="gear-accordion">
+  <summary class="gear-row gear-row-summary">
+    <span class="gear-row-left"><span class="gear-arrow" aria-hidden="true"></span>${plan.label}</span>
+    <strong>${esc(plan.name)}</strong>
+  </summary>
+  <div class="gear-slots">
+    <ul class="gear-slot-list">${slotRows}</ul>
+  </div>
+</details>`;
     })
     .join("");
-
-  return `<table class="piece-deco-table"><thead><tr><th>Piece</th><th>Gear</th><th>Slot Decorations</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderResults(): void {
@@ -576,12 +599,6 @@ function renderResults(): void {
     stats +
     state.results
       .map((r, i) => {
-        const head = state.data!.armorById[r.armor.head]?.name || "?";
-        const chest = state.data!.armorById[r.armor.chest]?.name || "?";
-        const arms = state.data!.armorById[r.armor.arms]?.name || "?";
-        const waist = state.data!.armorById[r.armor.waist]?.name || "?";
-        const legs = state.data!.armorById[r.armor.legs]?.name || "?";
-        const charm = state.data!.charmRankById[r.charmRankId]?.name || "?";
         return `
 <article class="result-card">
   <div class="result-header">
@@ -593,12 +610,7 @@ function renderResults(): void {
     <section class="result-block">
       <h4>Gear</h4>
       <div class="gear-grid">
-        <div class="gear-row"><span>Head</span><strong>${esc(head)}</strong></div>
-        <div class="gear-row"><span>Chest</span><strong>${esc(chest)}</strong></div>
-        <div class="gear-row"><span>Arms</span><strong>${esc(arms)}</strong></div>
-        <div class="gear-row"><span>Waist</span><strong>${esc(waist)}</strong></div>
-        <div class="gear-row"><span>Legs</span><strong>${esc(legs)}</strong></div>
-        <div class="gear-row"><span>Charm</span><strong>${esc(charm)}</strong></div>
+        ${renderGearWithDecorations(r)}
       </div>
       <div class="stat-grid">
         <div class="stat-item"><span>Defense</span><strong>${r.defenseBase}/${r.defenseMax}</strong></div>
@@ -610,8 +622,6 @@ function renderResults(): void {
     <section class="result-block">
       <h4>Requested Skills</h4>
       ${requestedSkillChecklist(r.skillTotals)}
-      <h4>Decoration Placement by Piece</h4>
-      ${pieceDecorationPlacement(r)}
     </section>
   </div>
 

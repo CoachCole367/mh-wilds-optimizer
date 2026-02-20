@@ -262,6 +262,11 @@ select {
   min-width: 0;
 }
 
+#skill-list,
+#deco-list {
+  width: 100%;
+}
+
 .owned-charms-wrap {
   display: grid;
   gap: 8px;
@@ -353,6 +358,7 @@ button:disabled {
   color: var(--ink-soft);
   font-size: 0.9rem;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-line.error {
@@ -853,6 +859,11 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
   #app {
     padding: 14px 10px 24px;
   }
@@ -862,6 +873,7 @@ button:disabled {
   .pane {
     padding: 12px;
     border-radius: 12px;
+    overflow-x: clip;
   }
 
   .hero h1 {
@@ -879,6 +891,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     min-height: 34px;
+    min-width: 0;
     text-align: center;
     white-space: normal;
     line-height: 1.2;
@@ -895,6 +908,12 @@ button:disabled {
 
   .button-row > button {
     flex: 1 1 140px;
+  }
+
+  select[multiple],
+  select[size] {
+    width: 100%;
+    min-height: 140px;
   }
 
   .result-header {
@@ -937,11 +956,6 @@ button:disabled {
 }
 
 @media (max-width: 560px) {
-  select[multiple],
-  select[size] {
-    min-height: 140px;
-  }
-
   .info-link {
     padding: 5px 9px;
     font-size: 0.72rem;

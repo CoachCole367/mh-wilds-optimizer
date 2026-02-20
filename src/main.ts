@@ -100,7 +100,7 @@ if (!root) throw new Error("Missing #app.");
 root.innerHTML = `
 <div class="shell">
   <header class="hero">
-    <p class="kicker">Monster Hunter Wilds</p>
+    <p class="kicker">MHWilds Optimizer</p>
     <h1>Skill-First Gear Optimizer</h1>
     <nav class="info-links" aria-label="Site pages">
       <a class="info-link active" href="/">Optimizer</a>

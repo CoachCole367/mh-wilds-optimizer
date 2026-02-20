@@ -460,17 +460,22 @@ function groupedDecorations(placements: BuildResult["placements"]): string {
     return `<p class="muted">No decorations required.</p>`;
   }
 
-  const grouped = new Map<string, { slotSize: number; name: string; count: number }>();
+  const grouped = new Map<
+    string,
+    { slotSizeUsed: number; slotReq: number; name: string; count: number }
+  >();
   for (const placement of placements) {
-    const rawName = state.data!.decorationsById[placement.decorationId]?.name || `Decoration #${placement.decorationId}`;
-    const name = simplifyDecorationDisplayName(rawName);
+    const decoration = state.data!.decorationsById[placement.decorationId];
+    const name = decoration?.name || `Decoration #${placement.decorationId}`;
+    const slotReq = decoration?.slotReq ?? placement.slotSizeUsed;
     const key = `${placement.slotSizeUsed}-${placement.decorationId}`;
     const existing = grouped.get(key);
     if (existing) {
       existing.count += 1;
     } else {
       grouped.set(key, {
-        slotSize: placement.slotSizeUsed,
+        slotSizeUsed: placement.slotSizeUsed,
+        slotReq,
         name,
         count: 1,
       });
@@ -478,11 +483,12 @@ function groupedDecorations(placements: BuildResult["placements"]): string {
   }
 
   const rows = [...grouped.values()]
-    .sort((a, b) => a.slotSize - b.slotSize || a.name.localeCompare(b.name))
-    .map((item) => `<tr><td>S${item.slotSize}</td><td>${esc(item.name)}</td><td>x${item.count}</td></tr>`)
+    .sort((a, b) => a.slotSizeUsed - b.slotSizeUsed || a.slotReq - b.slotReq || a.name.localeCompare(b.name))
+    .map((item) => `<tr><td>S${item.slotSizeUsed}</td><td>S${item.slotReq}</td><td>${esc(item.name)}</td><td>x${item.count}</td></tr>`)
     .join("");
 
-  return `<table class="deco-table"><thead><tr><th>Slot</th><th>Decoration</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table class="deco-table"><thead><tr><th>Used Slot</th><th>Req</th><th>Decoration</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>
+  <p class="muted">Used Slot is where the decoration was placed. A larger slot can hold a smaller requirement.</p>`;
 }
 
 function renderResults(): void {

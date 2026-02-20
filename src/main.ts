@@ -1,6 +1,16 @@
 import "./style.css";
 import { clearCachedLocale, loadOptimizerData } from "./mhdbApi";
 import { compareBuildResults } from "./optimizer";
+import {
+  HUNT_ELEMENT_OPTIONS,
+  HUNT_STATUS_OPTIONS,
+  suggestFlexDecorations,
+  type FlexPresetMode,
+  type HuntElement,
+  type HuntFocus,
+  type HuntStatus,
+  type LeftoverSlot,
+} from "./flexSuggestions";
 import type {
   ArmorPiece,
   BuildResult,
@@ -12,6 +22,7 @@ import type {
   OptimizeWorkerProgress,
   OptimizeWorkerRequest,
   SkillPoints,
+  SlotSize,
   WorkerStats,
 } from "./types";
 
@@ -44,6 +55,9 @@ type State = {
   cancelRequested: boolean;
   skillSearch: string;
   decoSearch: string;
+  flexPresetMode: FlexPresetMode;
+  huntElement: HuntElement | "";
+  huntStatuses: Set<HuntStatus>;
 };
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -103,6 +117,25 @@ root.innerHTML = `
       <label class="checkbox-line"><input id="allow-gamma" type="checkbox"/><span>Allow &gamma; armor</span></label>
       <label class="field"><span>Max Threads</span><input id="threads" type="number" min="1" max="16"/></label>
       <label class="field"><span>Max Results Per Thread</span><input id="results-per-thread" type="number" min="1" max="200"/></label>
+      <label class="field"><span>Flex Preset</span>
+        <select id="flex-preset">
+          <option value="auto">Auto</option>
+          <option value="comfort">Comfort</option>
+          <option value="balanced">Balanced</option>
+          <option value="damage">Damage</option>
+        </select>
+      </label>
+      <label class="field"><span>Hunt Element</span>
+        <select id="hunt-element">
+          <option value="">None</option>
+          ${HUNT_ELEMENT_OPTIONS.map((element) => `<option value="${element}">${element[0].toUpperCase()}${element.slice(1)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="field"><span>Hunt Status</span>
+        <select id="hunt-status" multiple size="4" class="hunt-status-select">
+          ${HUNT_STATUS_OPTIONS.map((status) => `<option value="${status}">${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}
+        </select>
+      </label>
     </div>
     <div class="button-row">
       <button id="optimize" type="button">Optimize</button>
@@ -137,6 +170,9 @@ const el = {
   allowGamma: document.querySelector<HTMLInputElement>("#allow-gamma")!,
   threads: document.querySelector<HTMLInputElement>("#threads")!,
   resultsPerThread: document.querySelector<HTMLInputElement>("#results-per-thread")!,
+  flexPreset: document.querySelector<HTMLSelectElement>("#flex-preset")!,
+  huntElement: document.querySelector<HTMLSelectElement>("#hunt-element")!,
+  huntStatus: document.querySelector<HTMLSelectElement>("#hunt-status")!,
   optimize: document.querySelector<HTMLButtonElement>("#optimize")!,
   stop: document.querySelector<HTMLButtonElement>("#stop")!,
   copyLink: document.querySelector<HTMLButtonElement>("#copy-link")!,
@@ -155,6 +191,24 @@ for (const locale of LOCALES) {
 
 const params = new URLSearchParams(window.location.search);
 const decoParam = params.get("decos");
+const flexPresetParam = params.get("fp");
+const huntElementParam = params.get("he");
+const huntStatusParam = params.get("hs");
+const validFlexPresetModes: FlexPresetMode[] = ["auto", "comfort", "balanced", "damage"];
+const parsedFlexPresetMode: FlexPresetMode = validFlexPresetModes.includes((flexPresetParam as FlexPresetMode) || "auto")
+  ? ((flexPresetParam as FlexPresetMode) || "auto")
+  : "auto";
+const parsedHuntElement: HuntElement | "" = HUNT_ELEMENT_OPTIONS.includes((huntElementParam as HuntElement) || ("" as HuntElement))
+  ? ((huntElementParam as HuntElement) || "")
+  : "";
+const parsedHuntStatuses = new Set<HuntStatus>();
+for (const part of (huntStatusParam || "").split(",")) {
+  const trimmed = part.trim();
+  if (!trimmed) continue;
+  if (HUNT_STATUS_OPTIONS.includes(trimmed as HuntStatus)) {
+    parsedHuntStatuses.add(trimmed as HuntStatus);
+  }
+}
 const state: State = {
   locale: LOCALES.includes(params.get("loc") || "") ? (params.get("loc") as string) : "en",
   data: null,
@@ -178,6 +232,9 @@ const state: State = {
   cancelRequested: false,
   skillSearch: "",
   decoSearch: "",
+  flexPresetMode: parsedFlexPresetMode,
+  huntElement: parsedHuntElement,
+  huntStatuses: parsedHuntStatuses,
 };
 
 const decoLabel: Record<number, string> = {};
@@ -337,6 +394,11 @@ function rerender(): void {
   el.allowGamma.checked = state.allowGamma;
   el.threads.value = String(state.threads);
   el.resultsPerThread.value = String(state.resultsPerThread);
+  el.flexPreset.value = state.flexPresetMode;
+  el.huntElement.value = state.huntElement;
+  for (const option of el.huntStatus.options) {
+    option.selected = state.huntStatuses.has(option.value as HuntStatus);
+  }
   renderDataStatus();
   renderSkillList();
   renderDesired();
@@ -578,6 +640,78 @@ function renderGearWithDecorations(result: BuildResult): string {
     .join("");
 }
 
+function buildHuntFocusFromState(): HuntFocus {
+  const statuses = [...state.huntStatuses];
+  if (!state.huntElement && statuses.length === 0) {
+    return null;
+  }
+  return {
+    element: state.huntElement || undefined,
+    status: statuses.length > 0 ? statuses : undefined,
+  };
+}
+
+function extractLeftoverSlots(result: BuildResult): LeftoverSlot[] {
+  const plans = buildPieceSlotPlans(result);
+  const leftover: LeftoverSlot[] = [];
+  let slotIndex = 1;
+  for (const plan of plans) {
+    for (const slot of plan.slots) {
+      if (slot.decoName === null) {
+        leftover.push({
+          slotIndex,
+          slotLevel: slot.slotSize as SlotSize,
+          pieceLabel: plan.label,
+          pieceName: plan.name,
+        });
+      }
+      slotIndex += 1;
+    }
+  }
+  return leftover;
+}
+
+function renderFlexSuggestions(result: BuildResult): string {
+  if (!state.data) {
+    return `<p class="muted">No flex suggestion data.</p>`;
+  }
+
+  const leftoverSlots = extractLeftoverSlots(result);
+  if (leftoverSlots.length === 0) {
+    return `<p class="muted">No leftover slots available for flex suggestions.</p>`;
+  }
+
+  const suggestions = suggestFlexDecorations({
+    build: result,
+    leftoverSlots,
+    data: state.data,
+    desiredSkills: state.desired,
+    presetMode: state.flexPresetMode,
+    huntFocus: buildHuntFocusFromState(),
+    allowedDecorationIds: state.useAllDecos ? null : state.selectedDecos,
+  });
+
+  if (suggestions.length === 0) {
+    return `<p class="muted">No valid flex suggestions for the current decoration pool.</p>`;
+  }
+
+  return `<div class="flex-suggestion-list">${suggestions
+    .map((suggestion, index) => {
+      const loadoutRows = suggestion.decorationLoadout
+        .map(
+          (entry) =>
+            `<li>Slot ${entry.slotIndex} (${entry.pieceLabel} S${entry.slotLevel}) -> ${esc(entry.decorationName)}</li>`,
+        )
+        .join("");
+      return `<article class="flex-suggestion-card">
+        <div class="flex-suggestion-header"><strong>Option ${index + 1}</strong><span>Score ${suggestion.score.toFixed(1)}</span></div>
+        <ul class="flex-loadout-list">${loadoutRows}</ul>
+        <p class="muted">${esc(suggestion.explanation)}</p>
+      </article>`;
+    })
+    .join("")}</div>`;
+}
+
 function renderResults(): void {
   el.runStatus.textContent = state.runStatus;
   if (!state.data) {
@@ -622,6 +756,8 @@ function renderResults(): void {
     <section class="result-block">
       <h4>Requested Skills</h4>
       ${requestedSkillChecklist(r.skillTotals)}
+      <h4>Flex Slot Suggestions</h4>
+      ${renderFlexSuggestions(r)}
     </section>
   </div>
 
@@ -730,6 +866,15 @@ function shareUrl(): string {
   p.set("r", String(state.resultsPerThread));
   const selected = [...state.selectedDecos].sort((a, b) => a - b);
   p.set("decos", state.useAllDecos ? "all" : selected.length > 0 ? selected.join(",") : "none");
+  if (state.flexPresetMode !== "auto") {
+    p.set("fp", state.flexPresetMode);
+  }
+  if (state.huntElement) {
+    p.set("he", state.huntElement);
+  }
+  if (state.huntStatuses.size > 0) {
+    p.set("hs", [...state.huntStatuses].sort().join(","));
+  }
   return `${window.location.origin}${window.location.pathname}?${p.toString()}`;
 }
 
@@ -930,6 +1075,27 @@ el.allowAlpha.addEventListener("change", () => (state.allowAlpha = el.allowAlpha
 el.allowGamma.addEventListener("change", () => (state.allowGamma = el.allowGamma.checked));
 el.threads.addEventListener("change", () => (state.threads = clampInt(el.threads.value, DEFAULT_THREADS, 1, MAX_THREADS)));
 el.resultsPerThread.addEventListener("change", () => (state.resultsPerThread = clampInt(el.resultsPerThread.value, DEFAULT_RESULTS, 1, MAX_RESULTS)));
+el.flexPreset.addEventListener("change", () => {
+  const value = el.flexPreset.value as FlexPresetMode;
+  state.flexPresetMode = ["auto", "comfort", "balanced", "damage"].includes(value) ? value : "auto";
+  renderResults();
+});
+el.huntElement.addEventListener("change", () => {
+  const value = el.huntElement.value as HuntElement | "";
+  state.huntElement = HUNT_ELEMENT_OPTIONS.includes(value as HuntElement) ? (value as HuntElement) : "";
+  renderResults();
+});
+el.huntStatus.addEventListener("change", () => {
+  const next = new Set<HuntStatus>();
+  for (const option of el.huntStatus.options) {
+    if (!option.selected) continue;
+    if (HUNT_STATUS_OPTIONS.includes(option.value as HuntStatus)) {
+      next.add(option.value as HuntStatus);
+    }
+  }
+  state.huntStatuses = next;
+  renderResults();
+});
 el.optimize.addEventListener("click", () => optimize().catch(() => undefined));
 el.stop.addEventListener("click", () => cancelOptimization());
 el.copyLink.addEventListener("click", async () => {

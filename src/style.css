@@ -171,6 +171,10 @@ select[size] {
   min-height: 170px;
 }
 
+.hunt-status-select {
+  min-height: 100px !important;
+}
+
 button {
   cursor: pointer;
   font-weight: 700;
@@ -469,6 +473,37 @@ button:disabled {
 .slot-pill.empty {
   color: var(--ink-soft);
   background: rgba(255, 255, 255, 0.58);
+}
+
+.flex-suggestion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.flex-suggestion-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+  padding: 8px;
+}
+
+.flex-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.84rem;
+}
+
+.flex-suggestion-header span {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--ink-soft);
+}
+
+.flex-loadout-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
 }
 
 .summary-line {

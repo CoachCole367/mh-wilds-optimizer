@@ -352,6 +352,7 @@ button:disabled {
   margin: 0;
   color: var(--ink-soft);
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .status-line.error {
@@ -867,6 +868,22 @@ button:disabled {
     font-size: clamp(1.25rem, 7.5vw, 1.7rem);
   }
 
+  .info-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .info-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2;
+  }
+
   .inline-grid,
   .controls-main {
     grid-template-columns: 1fr;
@@ -927,7 +944,7 @@ button:disabled {
 
   .info-link {
     padding: 5px 9px;
-    font-size: 0.74rem;
+    font-size: 0.72rem;
   }
 
   .charm-actions {

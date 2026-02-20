@@ -123,6 +123,21 @@ body {
   align-items: end;
 }
 
+.controls-main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.controls-hunt {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
 .button-row {
   display: flex;
   gap: 8px;
@@ -171,8 +186,43 @@ select[size] {
   min-height: 170px;
 }
 
-.hunt-status-select {
-  min-height: 100px !important;
+.hunt-status-box {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.hunt-status-box legend {
+  padding: 0 4px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.hunt-status-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hunt-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #fff7eb;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.hunt-status-pill input {
+  margin: 0;
 }
 
 button {
@@ -558,5 +608,11 @@ button:disabled {
 
   .result-columns {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  .controls-hunt {
+    grid-template-columns: 1fr;
   }
 }

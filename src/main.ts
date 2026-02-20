@@ -112,7 +112,7 @@ root.innerHTML = `
 
   <section class="panel">
     <h2>Controls</h2>
-    <div class="inline-grid">
+    <div class="controls-main">
       <label class="checkbox-line"><input id="allow-alpha" type="checkbox"/><span>Allow &alpha; armor</span></label>
       <label class="checkbox-line"><input id="allow-gamma" type="checkbox"/><span>Allow &gamma; armor</span></label>
       <label class="field"><span>Max Threads</span><input id="threads" type="number" min="1" max="16"/></label>
@@ -125,17 +125,23 @@ root.innerHTML = `
           <option value="damage">Damage</option>
         </select>
       </label>
-      <label class="field"><span>Hunt Element</span>
+    </div>
+    <div class="controls-hunt">
+      <label class="field"><span>Hunt Element (Optional)</span>
         <select id="hunt-element">
           <option value="">None</option>
           ${HUNT_ELEMENT_OPTIONS.map((element) => `<option value="${element}">${element[0].toUpperCase()}${element.slice(1)}</option>`).join("")}
         </select>
       </label>
-      <label class="field"><span>Hunt Status</span>
-        <select id="hunt-status" multiple size="4" class="hunt-status-select">
-          ${HUNT_STATUS_OPTIONS.map((status) => `<option value="${status}">${status[0].toUpperCase()}${status.slice(1)}</option>`).join("")}
-        </select>
-      </label>
+      <fieldset class="hunt-status-box">
+        <legend>Hunt Status (Optional)</legend>
+        <div class="hunt-status-list">
+          ${HUNT_STATUS_OPTIONS.map(
+            (status) =>
+              `<label class="hunt-status-pill"><input type="checkbox" data-hunt-status="${status}"/><span>${status[0].toUpperCase()}${status.slice(1)}</span></label>`,
+          ).join("")}
+        </div>
+      </fieldset>
     </div>
     <div class="button-row">
       <button id="optimize" type="button">Optimize</button>
@@ -172,7 +178,6 @@ const el = {
   resultsPerThread: document.querySelector<HTMLInputElement>("#results-per-thread")!,
   flexPreset: document.querySelector<HTMLSelectElement>("#flex-preset")!,
   huntElement: document.querySelector<HTMLSelectElement>("#hunt-element")!,
-  huntStatus: document.querySelector<HTMLSelectElement>("#hunt-status")!,
   optimize: document.querySelector<HTMLButtonElement>("#optimize")!,
   stop: document.querySelector<HTMLButtonElement>("#stop")!,
   copyLink: document.querySelector<HTMLButtonElement>("#copy-link")!,
@@ -181,6 +186,9 @@ const el = {
   runStatus: document.querySelector<HTMLParagraphElement>("#run-status")!,
   results: document.querySelector<HTMLDivElement>("#results")!,
 };
+const huntStatusInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[data-hunt-status]'),
+);
 
 for (const locale of LOCALES) {
   const option = document.createElement("option");
@@ -396,8 +404,8 @@ function rerender(): void {
   el.resultsPerThread.value = String(state.resultsPerThread);
   el.flexPreset.value = state.flexPresetMode;
   el.huntElement.value = state.huntElement;
-  for (const option of el.huntStatus.options) {
-    option.selected = state.huntStatuses.has(option.value as HuntStatus);
+  for (const input of huntStatusInputs) {
+    input.checked = state.huntStatuses.has(input.dataset.huntStatus as HuntStatus);
   }
   renderDataStatus();
   renderSkillList();
@@ -1085,17 +1093,20 @@ el.huntElement.addEventListener("change", () => {
   state.huntElement = HUNT_ELEMENT_OPTIONS.includes(value as HuntElement) ? (value as HuntElement) : "";
   renderResults();
 });
-el.huntStatus.addEventListener("change", () => {
-  const next = new Set<HuntStatus>();
-  for (const option of el.huntStatus.options) {
-    if (!option.selected) continue;
-    if (HUNT_STATUS_OPTIONS.includes(option.value as HuntStatus)) {
-      next.add(option.value as HuntStatus);
+for (const input of huntStatusInputs) {
+  input.addEventListener("change", () => {
+    const next = new Set<HuntStatus>();
+    for (const statusInput of huntStatusInputs) {
+      if (!statusInput.checked) continue;
+      const status = statusInput.dataset.huntStatus as HuntStatus | undefined;
+      if (status && HUNT_STATUS_OPTIONS.includes(status)) {
+        next.add(status);
+      }
     }
-  }
-  state.huntStatuses = next;
-  renderResults();
-});
+    state.huntStatuses = next;
+    renderResults();
+  });
+}
 el.optimize.addEventListener("click", () => optimize().catch(() => undefined));
 el.stop.addEventListener("click", () => cancelOptimization());
 el.copyLink.addEventListener("click", async () => {

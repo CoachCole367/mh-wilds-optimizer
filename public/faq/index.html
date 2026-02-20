@@ -10,6 +10,8 @@
     />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
     <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/faq/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site-pages.css" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -25,87 +27,172 @@
           },
           {
             "@type": "Question",
+            "name": "What is the difference between Charm Mode Off, Suggest After, and Owned?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Off disables charm post-processing. Suggest After adds theoretical RNG charm templates after builds are generated. Owned evaluates your imported owned charm list."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Are suggested RNG charms real charms I own?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Suggest After shows theoretical templates designed to complete deficits. They are labeled as theoretical and are not automatically owned."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can set or group skills be rolled on RNG charms?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Set and group skills are excluded from RNG charm suggestions. Suggested charm skills are limited to rollable skills."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why do I get no results?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Common causes are too many high targets at once, strict armor/deco filters, or near-miss disabled. Lower one or two targets, expand decoration pool, or enable near-miss."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What does Allow Near-Miss Solver Results do?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "It keeps builds that are slightly short on requested skills so charm processing can complete them. Near-Miss Max Missing Points controls how short they may be."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why might HIGH charm dependence not appear?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "If a build already meets all targets before charm help, dependence is LOW or NONE. HIGH only appears when a build meaningfully relies on charm completion."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What performance settings are recommended?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Start with default Max Threads (about 80 percent of available threads) and Max Results Per Thread around 25 to 50. Increase gradually if your machine stays responsive."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I use Owned Charm Builder with the optimizer?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Create or import charms in Owned Charm Builder, then switch optimizer Charm Mode to Owned. The optimizer reads the same local storage data."
+            }
+          },
+          {
+            "@type": "Question",
             "name": "Where does the gear data come from?",
             "acceptedAnswer": {
               "@type": "Answer",
               "text": "The app uses MHDB Wilds API data for armor, armor sets, skills, decorations, and charms."
             }
-          },
-          {
-            "@type": "Question",
-            "name": "Why are some builds missing?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Filters such as alpha or gamma armor toggles, selected decorations, and requested skill levels can remove potential builds from the search space."
-            }
           }
         ]
       }
     </script>
-    <style>
-      body {
-        margin: 0;
-        font-family: Arial, sans-serif;
-        line-height: 1.65;
-        color: #1f1f1f;
-        background: #f8f5ee;
-      }
-      main {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 2rem 1rem 3rem;
-      }
-      h1,
-      h2 {
-        line-height: 1.25;
-      }
-      details {
-        border: 1px solid #d7d1c5;
-        border-radius: 8px;
-        background: #ffffff;
-        padding: 0.75rem 0.9rem;
-        margin: 0.8rem 0;
-      }
-      summary {
-        font-weight: 700;
-        cursor: pointer;
-      }
-      a {
-        color: #0d5f54;
-      }
-      .nav {
-        margin-top: 1.5rem;
-      }
-    </style>
   </head>
   <body>
-    <main>
-      <h1>FAQ</h1>
-      <details open>
-        <summary>What does this optimizer calculate?</summary>
-        <p>
-          It searches armor, charm, and decoration combinations that meet selected skill targets and
-          ranks valid results by defense and slot efficiency.
-        </p>
-      </details>
-      <details>
-        <summary>Where does the gear data come from?</summary>
-        <p>
-          The app uses MHDB Wilds API data for armor, armor sets, skills, decorations, and charms.
-        </p>
-      </details>
-      <details>
-        <summary>Why are some builds missing?</summary>
-        <p>
-          Filters such as alpha or gamma armor toggles, selected decorations, and requested skill levels
-          can remove potential builds from the search space.
-        </p>
-      </details>
-      <details>
-        <summary>Does this tool calculate weapon damage?</summary>
-        <p>No. This project is skill-first build planning for armor sets and related setup.</p>
-      </details>
-      <p class="nav"><a href="/">Home</a> | <a href="/about/">About</a></p>
+    <main class="site-shell">
+      <section class="site-hero">
+        <p class="site-kicker">MH Wilds Optimizer</p>
+        <h1>Frequently Asked Questions</h1>
+        <p>Quick answers for common optimizer behavior, data source, and result filtering questions.</p>
+        <nav class="site-nav" aria-label="Site pages">
+          <a class="site-link" href="/">Optimizer</a>
+          <a class="site-link" href="/about/index.html">About</a>
+          <a class="site-link active" href="/faq/index.html">FAQ</a>
+          <a class="site-link" href="/charm-builder/index.html">Owned Charm Builder</a>
+        </nav>
+      </section>
+
+      <section class="site-panel">
+        <details class="faq-item" open>
+          <summary>What does this optimizer calculate?</summary>
+          <p>
+            It searches armor, charm, and decoration combinations that meet selected skill targets and
+            ranks valid results by defense and slot efficiency.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>What is the difference between Charm Mode Off, Suggest After, and Owned?</summary>
+          <p>
+            Off disables charm post-processing. Suggest After adds theoretical RNG charm templates after
+            builds are generated. Owned evaluates your imported owned charm list.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Are suggested RNG charms real charms I own?</summary>
+          <p>
+            No. Suggest After outputs theoretical templates intended to complete missing targets. They are
+            not automatically treated as owned charms.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Can set or group skills be rolled on RNG charms?</summary>
+          <p>
+            No. Set and group skills are excluded from RNG charm suggestions. Only rollable skill types
+            are used for suggested templates.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Why do I get no results?</summary>
+          <p>
+            Typical causes are too many high targets at once, strict armor/deco filters, or near-miss
+            disabled. Try lowering one or two targets, broadening your decoration pool, or enabling
+            near-miss results.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>What does Allow Near-Miss Solver Results do?</summary>
+          <p>
+            It keeps builds that are slightly short on requested levels so charm processing can complete
+            them. Near-Miss Max Missing Points controls how short those builds may be.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Why might HIGH charm dependence not appear?</summary>
+          <p>
+            HIGH appears only when a build materially depends on charm completion. If required deficits
+            are already zero before charm help, dependence will be LOW or NONE.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>What performance settings are recommended?</summary>
+          <p>
+            Start with default Max Threads (about 80% of available threads) and Max Results Per Thread
+            around 25 to 50. Raise values gradually while watching responsiveness.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>How do I use Owned Charm Builder with the optimizer?</summary>
+          <p>
+            Create/import charms in Owned Charm Builder, then set Charm Mode to Owned in the optimizer.
+            Both pages use the same local storage key.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Where does the gear data come from?</summary>
+          <p>
+            The app uses MHDB Wilds API data for armor, armor sets, skills, decorations, and charms.
+          </p>
+        </details>
+        <details class="faq-item">
+          <summary>Does this tool calculate weapon damage?</summary>
+          <p>No. This project is skill-first build planning for armor sets and related setup.</p>
+        </details>
+      </section>
+      <p class="footer-note">MH Wilds Skill-First Gear Optimizer</p>
     </main>
   </body>
 </html>
+

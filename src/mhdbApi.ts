@@ -72,6 +72,7 @@ const CHARMS_PROJECTION: Projection = {
   "ranks.name": true,
   "ranks.level": true,
   "ranks.rarity": true,
+  "ranks.slots": true,
   "ranks.skills.skill.id": true,
   "ranks.skills.level": true,
 };

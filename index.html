@@ -60,6 +60,20 @@
         }
       }
     </script>
+    <script>
+      const staticRouteMap = {
+        "/about": "/about/index.html",
+        "/about/": "/about/index.html",
+        "/faq": "/faq/index.html",
+        "/faq/": "/faq/index.html",
+        "/charm-builder": "/charm-builder/index.html",
+        "/charm-builder/": "/charm-builder/index.html"
+      };
+      const staticTarget = staticRouteMap[window.location.pathname];
+      if (staticTarget) {
+        window.location.replace(`${staticTarget}${window.location.search}${window.location.hash}`);
+      }
+    </script>
   </head>
   <body>
     <div id="app">
@@ -77,7 +91,7 @@
           selected gear pieces, skill totals, defense values, resistances, and decoration placements.
           If JavaScript is disabled, use the links below for crawlable site content.
         </p>
-        <p><a href="/about/">About</a> | <a href="/faq/">FAQ</a></p>
+        <p><a href="/about/index.html">About</a> | <a href="/faq/index.html">FAQ</a> | <a href="/charm-builder/index.html">Owned Charm Builder</a></p>
       </main>
     </div>
     <noscript>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Owned Charm Builder | MH Wilds Skill-First Gear Optimizer</title>
+    <meta
+      name="description"
+      content="Create and manage your owned Monster Hunter Wilds charms with a form-based editor, then sync directly into Owned Charm mode."
+    />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/charm-builder/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site-pages.css" />
+  </head>
+  <body>
+    <main class="site-shell">
+      <section class="site-hero">
+        <p class="site-kicker">MH Wilds Optimizer</p>
+        <h1>Owned Charm Builder</h1>
+        <p>
+          Build your owned charms with a form instead of hand-editing JSON. Saved charms sync with
+          <strong>Charm Mode: Owned</strong> in the optimizer.
+        </p>
+        <nav class="site-nav" aria-label="Site pages">
+          <a class="site-link" href="/">Optimizer</a>
+          <a class="site-link" href="/about/index.html">About</a>
+          <a class="site-link" href="/faq/index.html">FAQ</a>
+          <a class="site-link active" href="/charm-builder/index.html">Owned Charm Builder</a>
+        </nav>
+      </section>
+
+      <section class="site-panel">
+        <h2>Create Charm</h2>
+        <p class="muted">Use this panel to add one owned charm at a time.</p>
+        <div class="grid">
+          <label>
+            <span>Name</span>
+            <input id="charm-name" type="text" placeholder="WEX2 EE1" />
+          </label>
+          <label>
+            <span>Rarity (Optional)</span>
+            <input id="charm-rarity" type="number" min="1" max="10" />
+          </label>
+          <label>
+            <span>Locale</span>
+            <select id="locale">
+              <option value="en">en</option>
+              <option value="ja">ja</option>
+              <option value="ko">ko</option>
+              <option value="fr">fr</option>
+              <option value="de">de</option>
+              <option value="es">es</option>
+              <option value="it">it</option>
+              <option value="pl">pl</option>
+              <option value="pt-BR">pt-BR</option>
+              <option value="ru">ru</option>
+              <option value="zh-Hans">zh-Hans</option>
+              <option value="zh-Hant">zh-Hant</option>
+              <option value="ar">ar</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid">
+          <label>
+            <span>Slot 1</span>
+            <input id="slot-1" type="number" min="0" max="3" value="2" />
+          </label>
+          <label>
+            <span>Slot 2</span>
+            <input id="slot-2" type="number" min="0" max="3" value="1" />
+          </label>
+          <label>
+            <span>Slot 3</span>
+            <input id="slot-3" type="number" min="0" max="3" value="0" />
+          </label>
+        </div>
+        <div id="skill-rows" class="skill-rows"></div>
+        <div class="button-row">
+          <button id="add-skill-row" type="button">Add Skill Row</button>
+          <button id="add-charm" type="button">Add Charm</button>
+        </div>
+        <p id="builder-status" class="muted"></p>
+      </section>
+
+      <section class="site-panel">
+        <h2>Owned Charm Library</h2>
+        <p class="muted">Import, export, or edit your owned charm list that syncs with optimizer storage.</p>
+        <div class="button-row">
+          <button id="export-json" type="button">Export JSON</button>
+          <button id="copy-json" type="button">Copy JSON</button>
+          <button id="import-json" type="button">Import JSON</button>
+          <button id="clear-all" type="button" class="danger">Clear All</button>
+        </div>
+        <textarea id="json-io" placeholder='[{"name":"WEX2 EE1","skills":{"57":2,"102":1},"slots":[2,1,0]}]'></textarea>
+        <p id="library-summary" class="muted"></p>
+        <div id="owned-list" class="owned-list"></div>
+      </section>
+      <p class="footer-note">MH Wilds Skill-First Gear Optimizer</p>
+    </main>
+    <script defer src="/charm-builder/builder.js"></script>
+  </body>
+</html>
+

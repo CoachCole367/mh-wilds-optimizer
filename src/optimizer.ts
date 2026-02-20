@@ -242,6 +242,14 @@ function dominatesCharm(a: CharmRank, b: CharmRank, requestedSkillIds: number[])
       strictlyBetter = true;
     }
   }
+
+  if (!slotsAtLeast(a.slots, b.slots)) {
+    return false;
+  }
+  if (slotsStrictlyBetter(a.slots, b.slots)) {
+    strictlyBetter = true;
+  }
+
   return strictlyBetter;
 }
 
@@ -294,6 +302,16 @@ function slotCountsFromSlots(slots: number[]): number[] {
 
 function serializeDeficitState(state: DeficitState): string {
   return `${state.deficits.join(",")}|${state.slotCounts[1]},${state.slotCounts[2]},${state.slotCounts[3]},${state.slotCounts[4]}`;
+}
+
+function sumDeficits(deficits: number[]): number {
+  let total = 0;
+  for (const value of deficits) {
+    if (value > 0) {
+      total += value;
+    }
+  }
+  return total;
 }
 
 function mostUrgentSkillIndex(deficits: number[]): number {
@@ -372,29 +390,21 @@ function findSmallestFittingSlot(slotCounts: number[], slotReq: SlotSize): SlotS
   return null;
 }
 
-function allDeficitsResolved(deficits: number[]): boolean {
-  for (const value of deficits) {
-    if (value > 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function assignDecorations(
   skillIds: number[],
   skillIndexById: SkillIndexById,
   deficits: number[],
   slotCounts: number[],
+  maxRemainingMissing: number,
   decorationData: DecorationData,
   memo: Map<string, DecorationPlacement[] | null>,
 ): DecorationPlacement[] | null {
-  if (allDeficitsResolved(deficits)) {
+  if (sumDeficits(deficits) <= maxRemainingMissing) {
     return [];
   }
 
   const state: DeficitState = { deficits, slotCounts };
-  const key = serializeDeficitState(state);
+  const key = `${maxRemainingMissing}|${serializeDeficitState(state)}`;
   if (memo.has(key)) {
     return memo.get(key) ?? null;
   }
@@ -446,6 +456,7 @@ function assignDecorations(
       skillIndexById,
       nextDeficits,
       nextSlotCounts,
+      maxRemainingMissing,
       decorationData,
       memo,
     );
@@ -559,6 +570,11 @@ function buildTieKey(
 }
 
 export function compareBuildResults(a: BuildResult, b: BuildResult): number {
+  const aMissing = a.missingRequestedPoints ?? 0;
+  const bMissing = b.missingRequestedPoints ?? 0;
+  if (aMissing !== bMissing) {
+    return aMissing - bMissing;
+  }
   if (a.defenseMax !== b.defenseMax) {
     return b.defenseMax - a.defenseMax;
   }
@@ -715,6 +731,10 @@ export function optimizeBuilds(
   };
 
   const desiredById = new Map<number, number>();
+  const includeNearMissResults = request.includeNearMissResults === true;
+  const maxMissingPoints = includeNearMissResults
+    ? Math.max(1, Math.min(12, Math.floor(request.maxMissingPoints ?? 2)))
+    : 0;
   for (const desired of request.desiredSkills) {
     if (desired.level > 0) {
       desiredById.set(desired.skillId, desired.level);
@@ -900,6 +920,7 @@ export function optimizeBuilds(
 
   function canStillHitTargets(kindIndex: number): boolean {
     const remainingPieces = ARMOR_ORDER.length - kindIndex;
+    const allowedMissingForBound = includeNearMissResults ? maxMissingPoints : 0;
     for (let i = 0; i < requestedSkillIds.length; i += 1) {
       const skillId = requestedSkillIds[i];
       const setBonusUpper =
@@ -907,7 +928,7 @@ export function optimizeBuilds(
           ? maxSetBonusFromCurrentCounts(skillId, remainingPieces)
           : maxSetBonus[i];
       const upperBound = currentRequested[i] + remainingUpperBounds[kindIndex][i] + maxCharm[i] + setBonusUpper;
-      if (upperBound < targets[i]) {
+      if (upperBound + allowedMissingForBound < targets[i]) {
         return false;
       }
     }
@@ -977,6 +998,7 @@ export function optimizeBuilds(
         skillIndexById,
         deficits,
         slotCounts,
+        includeNearMissResults ? maxMissingPoints : 0,
         decorationData,
         decorationMemo,
       );
@@ -994,6 +1016,7 @@ export function optimizeBuilds(
       }
 
       let allTargetsMet = true;
+      let missingRequestedPoints = 0;
       let wastedRequestedPoints = 0;
       for (let i = 0; i < requestedSkillIds.length; i += 1) {
         const skillId = requestedSkillIds[i];
@@ -1001,13 +1024,18 @@ export function optimizeBuilds(
         const target = targets[i];
         if (total < target) {
           allTargetsMet = false;
-          break;
+          missingRequestedPoints += target - total;
+          continue;
         }
         if (total > target) {
           wastedRequestedPoints += total - target;
         }
       }
-      if (!allTargetsMet) {
+      const nearMissAccepted =
+        includeNearMissResults &&
+        missingRequestedPoints > 0 &&
+        missingRequestedPoints <= maxMissingPoints;
+      if (!allTargetsMet && !nearMissAccepted) {
         continue;
       }
 
@@ -1019,6 +1047,8 @@ export function optimizeBuilds(
       const result: BuildResult = {
         armor: armorIds,
         charmRankId: charm.id,
+        charmName: charm.name,
+        charmSlots: [...charm.slots],
         placements: placement,
         skillTotals: totalsAfterDecos,
         defenseBase,
@@ -1026,6 +1056,7 @@ export function optimizeBuilds(
         resist,
         leftoverSlotCapacity,
         wastedRequestedPoints,
+        missingRequestedPoints,
         tieKey,
       };
 

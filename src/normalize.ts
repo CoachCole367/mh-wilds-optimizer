@@ -71,6 +71,7 @@ type RawCharmRank = {
   name: string;
   level?: number;
   rarity?: number;
+  slots?: number[];
   skills?: RawSkillLevelEntry[];
 };
 
@@ -309,7 +310,7 @@ function toCharmRanks(rawCharms: RawCharm[]): {
         level: rank.level ?? 0,
         rarity: rank.rarity ?? 0,
         skills: toSkillPoints(rank.skills),
-        slots: [],
+        slots: toSlots(rank.slots),
       };
       charmRanks.push(normalized);
       byId[normalized.id] = normalized;

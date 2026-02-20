@@ -3,6 +3,7 @@ export type SkillPoints = Record<SkillId, number>;
 
 export type SlotSize = 1 | 2 | 3 | 4;
 export type Slots = SlotSize[];
+export type CharmMode = "off" | "suggest" | "owned";
 
 export type ArmorKind = "head" | "chest" | "arms" | "waist" | "legs";
 
@@ -89,6 +90,21 @@ export type DesiredSkill = {
   level: number;
 };
 
+export type Charm = {
+  id: string;
+  name: string;
+  rarity?: number;
+  skills: Record<string, number>;
+  slots: [number, number, number];
+  weaponSlot?: number;
+};
+
+export type CharmSuggestion = {
+  charm: Charm;
+  score: number;
+  explains: string[];
+};
+
 export type DecorationPlacement = {
   slotSizeUsed: SlotSize;
   decorationId: number;
@@ -97,6 +113,8 @@ export type DecorationPlacement = {
 export type BuildResult = {
   armor: Record<ArmorKind, number>;
   charmRankId: number;
+  charmName: string;
+  charmSlots: Slots;
   placements: DecorationPlacement[];
   skillTotals: SkillPoints;
   defenseBase: number;
@@ -104,7 +122,20 @@ export type BuildResult = {
   resist: Resistances;
   leftoverSlotCapacity: number;
   wastedRequestedPoints: number;
+  missingRequestedPoints?: number;
   tieKey: string;
+  suggestedCharms?: CharmSuggestion[];
+  charmSuggestions?: CharmSuggestion[];
+  bestSuggestedCharm?: CharmSuggestion | null;
+  charmBonusScore?: number;
+  totalScoreWithCharm?: number;
+  charmRequirementSummary?: string;
+  meetsTargetsBase?: boolean;
+  meetsTargetsWithBestCharm?: boolean;
+  charmDependence?: "NONE" | "LOW" | "MED" | "HIGH";
+  baseScore?: number;
+  charmDeficitPoints?: number;
+  charmCoveredPoints?: number;
 };
 
 export type OptimizeWorkerRequest = {
@@ -115,6 +146,8 @@ export type OptimizeWorkerRequest = {
   useAllDecorations: boolean;
   allowedDecorationIds: number[];
   maxResults: number;
+  includeNearMissResults?: boolean;
+  maxMissingPoints?: number;
   allowedHeadIds: number[];
 };
 

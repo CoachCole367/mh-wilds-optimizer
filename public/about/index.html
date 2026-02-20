@@ -10,56 +10,79 @@
     />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
     <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/about/" />
-    <style>
-      body {
-        margin: 0;
-        font-family: Arial, sans-serif;
-        line-height: 1.65;
-        color: #1f1f1f;
-        background: #f8f5ee;
-      }
-      main {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 2rem 1rem 3rem;
-      }
-      h1,
-      h2 {
-        line-height: 1.25;
-      }
-      .muted {
-        color: #565656;
-      }
-      a {
-        color: #0d5f54;
-      }
-      .nav {
-        margin-top: 1.5rem;
-      }
-    </style>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site-pages.css" />
   </head>
   <body>
-    <main>
-      <h1>About MH Wilds Skill-First Gear Optimizer</h1>
-      <p>
-        MH Wilds Skill-First Gear Optimizer is a web tool for planning armor builds in Monster Hunter
-        Wilds by targeting skills first. You choose the skills and levels you want, apply filters such
-        as alpha or gamma armor, and the optimizer searches for valid armor, charm, and decoration
-        combinations.
-      </p>
-      <h2>Data Source</h2>
-      <p>
-        Build data comes from MHDB Wilds API endpoints for armor, armor sets, skills, decorations, and
-        charms. The app fetches and caches data client-side, then runs optimization logic in web workers
-        for responsiveness.
-      </p>
-      <h2>Ranking</h2>
-      <p>
-        Returned builds must meet all requested skill targets. Results are then ranked by highest max
-        defense, highest leftover slot capacity, and lowest wasted requested skill points.
-      </p>
-      <p class="muted">Not affiliated with Capcom.</p>
-      <p class="nav"><a href="/">Home</a> | <a href="/faq/">FAQ</a></p>
+    <main class="site-shell">
+      <section class="site-hero">
+        <p class="site-kicker">MH Wilds Optimizer</p>
+        <h1>About MH Wilds Skill-First Gear Optimizer</h1>
+        <p>
+          A skill-first planning tool for Monster Hunter Wilds armor builds, with fast worker-based
+          search and shareable setup links.
+        </p>
+        <nav class="site-nav" aria-label="Site pages">
+          <a class="site-link" href="/">Optimizer</a>
+          <a class="site-link active" href="/about/index.html">About</a>
+          <a class="site-link" href="/faq/index.html">FAQ</a>
+          <a class="site-link" href="/charm-builder/index.html">Owned Charm Builder</a>
+        </nav>
+      </section>
+
+      <section class="site-panel site-stack">
+        <div class="block">
+          <h2>Project Scope</h2>
+          <p>
+            MH Wilds Skill-First Gear Optimizer is a skill-first planner for Monster Hunter Wilds. It
+            helps you define target skills, search valid armor/deco combinations, and evaluate charm
+            requirements for each result.
+          </p>
+        </div>
+        <div class="block">
+          <h2>Tools In This Site</h2>
+          <p>
+            <strong>Skill-First Gear Optimizer:</strong> Build search tool for target skills, armor
+            filters, decoration pool control, near-miss handling, and charm-mode evaluation.
+          </p>
+          <p>
+            <strong>Owned Charm Builder:</strong> Form-based page for creating/editing owned charms,
+            with JSON import/export and direct sync to optimizer storage for Owned Charm mode.
+          </p>
+        </div>
+        <div class="site-columns">
+          <article class="block">
+            <h3>Data Source</h3>
+            <p>
+              Build data comes from MHDB Wilds API endpoints for armor, armor sets, skills, decorations,
+              and charms. The app fetches and caches data client-side.
+            </p>
+          </article>
+          <article class="block">
+            <h3>Ranking Model</h3>
+            <p>
+              Valid builds are ranked by score metrics such as defense, slot utility, and target-skill
+              efficiency. Charm suggestion mode can additionally re-rank using best post-build charm
+              completion.
+            </p>
+          </article>
+        </div>
+        <div class="site-columns">
+          <article class="block">
+            <h3>Beginner Filter Setups</h3>
+            <p><strong>Starter Realistic:</strong> Charm Mode = Off, Allow alpha/gamma = On, All decorations selected, Near-miss disabled.</p>
+            <p><strong>Starter With Guidance:</strong> Charm Mode = Suggest After, Near-miss enabled, Near-miss max missing points = 2, Show meets without charm = On, Show meets with best charm = On.</p>
+          </article>
+          <article class="block">
+            <h3>Advanced Filter Setups</h3>
+            <p><strong>RNG Theorycraft:</strong> Charm Mode = Suggest After, Near-miss enabled, Near-miss max missing points = 4-6, Hide HIGH charm dependence = Off.</p>
+            <p><strong>Owned Charm Validation:</strong> Charm Mode = Owned, import your charm library, Near-miss enabled (2-3), Show meets without charm = On and Show meets with best charm = On to compare realistic vs charm-assisted outputs.</p>
+          </article>
+        </div>
+        <p class="muted">This project is fan-made and not affiliated with Capcom.</p>
+      </section>
+      <p class="footer-note">MH Wilds Skill-First Gear Optimizer</p>
     </main>
   </body>
 </html>
+

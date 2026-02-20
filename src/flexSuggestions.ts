@@ -52,6 +52,8 @@ type ScoreContext = {
   worstElementValue: number;
 };
 
+type ElementUsageCaps = Record<HuntElement, number>;
+
 type PresetWeights = {
   survivability: number;
   multiplayer: number;
@@ -148,6 +150,80 @@ function findStatusResSkill(skillNameLower: string): HuntStatus | null {
     }
   }
   return null;
+}
+
+function resolveElementUsageCaps(context: ScoreContext): ElementUsageCaps {
+  const caps: ElementUsageCaps = {
+    fire: 1,
+    water: 1,
+    thunder: 1,
+    ice: 1,
+    dragon: 1,
+  };
+
+  if (context.worstElement) {
+    caps[context.worstElement] = 2;
+  }
+  if (context.huntFocus?.element) {
+    caps[context.huntFocus.element] = Math.max(caps[context.huntFocus.element], 3);
+  }
+  return caps;
+}
+
+function buildElementTagsByDecorationId(
+  decorations: Decoration[],
+  data: NormalizedData,
+): Record<number, HuntElement[]> {
+  const output: Record<number, HuntElement[]> = {};
+  for (const decoration of decorations) {
+    const tags = new Set<HuntElement>();
+    for (const rawSkillId in decoration.skills) {
+      const skillId = Number(rawSkillId);
+      if ((decoration.skills[skillId] ?? 0) <= 0) {
+        continue;
+      }
+      const skillName = lower(data.skillsById[skillId]?.name ?? "");
+      const tag = findElementResSkill(skillName);
+      if (tag) {
+        tags.add(tag);
+      }
+    }
+    output[decoration.id] = [...tags];
+  }
+  return output;
+}
+
+function countElementUsage(
+  idsBySlot: number[],
+  elementTagsByDecorationId: Record<number, HuntElement[]>,
+): Record<HuntElement, number> {
+  const counts: Record<HuntElement, number> = {
+    fire: 0,
+    water: 0,
+    thunder: 0,
+    ice: 0,
+    dragon: 0,
+  };
+  for (const decoId of idsBySlot) {
+    for (const element of elementTagsByDecorationId[decoId] ?? []) {
+      counts[element] += 1;
+    }
+  }
+  return counts;
+}
+
+function exceedsElementUsageCaps(
+  idsBySlot: number[],
+  caps: ElementUsageCaps,
+  elementTagsByDecorationId: Record<number, HuntElement[]>,
+): boolean {
+  const usage = countElementUsage(idsBySlot, elementTagsByDecorationId);
+  for (const element of HUNT_ELEMENT_OPTIONS) {
+    if (usage[element] > caps[element]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function inferPresetFromDesiredSkills(desiredSkills: DesiredSkill[], data: NormalizedData): FlexPreset {
@@ -357,6 +433,8 @@ function scoreAssignment(
   idsBySlot: number[],
   slotPlan: LeftoverSlot[],
   context: ScoreContext,
+  elementUsageCaps: ElementUsageCaps,
+  elementTagsByDecorationId: Record<number, HuntElement[]>,
 ): { score: number; explanation: string } {
   const runningSkillTotals: Record<number, number> = { ...context.build.skillTotals };
   let score = 0;
@@ -368,6 +446,14 @@ function scoreAssignment(
   let damageHits = 0;
   let utilityHits = 0;
   let multiplayerHits = 0;
+  const decoUsage: Record<number, number> = {};
+  const elementUsage: Record<HuntElement, number> = {
+    fire: 0,
+    water: 0,
+    thunder: 0,
+    ice: 0,
+    dragon: 0,
+  };
 
   for (let i = 0; i < idsBySlot.length; i += 1) {
     const decoId = idsBySlot[i];
@@ -375,6 +461,21 @@ function scoreAssignment(
     if (!decoration) {
       continue;
     }
+
+    const duplicateCount = decoUsage[decoId] ?? 0;
+    if (duplicateCount > 0) {
+      score -= duplicateCount * 7;
+    }
+    decoUsage[decoId] = duplicateCount + 1;
+
+    for (const element of elementTagsByDecorationId[decoId] ?? []) {
+      elementUsage[element] += 1;
+      const overflow = elementUsage[element] - elementUsageCaps[element];
+      if (overflow > 0) {
+        score -= overflow * 18;
+      }
+    }
+
     const signal = scoreDecorationSignal(decoration, runningSkillTotals, context);
     score += signal.score;
     totalWasted += signal.wastedPoints;
@@ -449,6 +550,8 @@ function enumerateByBruteforce(
 function enumerateByBeam(
   candidatesBySlot: Decoration[][],
   quickScoreById: Record<number, number>,
+  elementUsageCaps: ElementUsageCaps,
+  elementTagsByDecorationId: Record<number, HuntElement[]>,
 ): number[][] {
   let states: Array<{ idsBySlot: number[]; score: number }> = [{ idsBySlot: [], score: 0 }];
 
@@ -457,9 +560,26 @@ function enumerateByBeam(
     const candidates = candidatesBySlot[depth];
     for (const state of states) {
       for (const deco of candidates) {
+        const duplicateCount = state.idsBySlot.reduce((count, decoId) => count + (decoId === deco.id ? 1 : 0), 0);
+        const duplicatePenalty = duplicateCount * 4;
+
+        let elementOverflowPenalty = 0;
+        for (const element of elementTagsByDecorationId[deco.id] ?? []) {
+          let existingElementCount = 0;
+          for (const placedId of state.idsBySlot) {
+            if ((elementTagsByDecorationId[placedId] ?? []).includes(element)) {
+              existingElementCount += 1;
+            }
+          }
+          const overflow = existingElementCount + 1 - elementUsageCaps[element];
+          if (overflow > 0) {
+            elementOverflowPenalty += overflow * 12;
+          }
+        }
+
         nextStates.push({
           idsBySlot: [...state.idsBySlot, deco.id],
-          score: state.score + (quickScoreById[deco.id] ?? 0),
+          score: state.score + (quickScoreById[deco.id] ?? 0) - duplicatePenalty - elementOverflowPenalty,
         });
       }
     }
@@ -518,6 +638,7 @@ export function suggestFlexDecorations(input: {
     worstElement: worst.element,
     worstElementValue: worst.value,
   };
+  const elementUsageCaps = resolveElementUsageCaps(context);
 
   const allArmorDecorations = input.data.decorations.filter((deco) => {
     if (lower(deco.kind) !== "armor") return false;
@@ -527,6 +648,7 @@ export function suggestFlexDecorations(input: {
   if (allArmorDecorations.length === 0) {
     return [];
   }
+  const elementTagsByDecorationId = buildElementTagsByDecorationId(allArmorDecorations, input.data);
 
   const quickScoreById: Record<number, number> = {};
   for (const deco of allArmorDecorations) {
@@ -558,6 +680,10 @@ export function suggestFlexDecorations(input: {
   const seen = new Set<string>();
 
   function consider(idsBySlot: number[]): void {
+    if (exceedsElementUsageCaps(idsBySlot, elementUsageCaps, elementTagsByDecorationId)) {
+      return;
+    }
+
     const key = idsBySlot
       .map((decoId, index) => `${sortedSlots[index].slotLevel}-${decoId}`)
       .sort()
@@ -567,7 +693,7 @@ export function suggestFlexDecorations(input: {
     }
     seen.add(key);
 
-    const scored = scoreAssignment(idsBySlot, sortedSlots, context);
+    const scored = scoreAssignment(idsBySlot, sortedSlots, context, elementUsageCaps, elementTagsByDecorationId);
     const entry: SuggestedEntry = {
       idsBySlot,
       score: scored.score,
@@ -584,7 +710,12 @@ export function suggestFlexDecorations(input: {
   if (useBruteforce) {
     enumerateByBruteforce(candidatesBySlot, consider);
   } else {
-    const beamAssignments = enumerateByBeam(candidatesBySlot, quickScoreById);
+    const beamAssignments = enumerateByBeam(
+      candidatesBySlot,
+      quickScoreById,
+      elementUsageCaps,
+      elementTagsByDecorationId,
+    );
     for (const idsBySlot of beamAssignments) {
       consider(idsBySlot);
     }

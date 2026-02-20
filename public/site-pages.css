@@ -326,6 +326,25 @@ textarea {
 }
 
 @media (max-width: 760px) {
+  .site-shell {
+    padding: 14px 10px 24px;
+  }
+
+  .site-hero,
+  .site-panel {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .site-link {
+    padding: 5px 9px;
+    font-size: 0.74rem;
+  }
+
+  .button-row > button {
+    flex: 1 1 140px;
+  }
+
   .skill-row {
     grid-template-columns: 1fr;
   }

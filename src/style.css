@@ -115,6 +115,7 @@ body {
   gap: 10px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 
@@ -847,5 +848,93 @@ button:disabled {
 @media (max-width: 920px) {
   .controls-hunt {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  #app {
+    padding: 14px 10px 24px;
+  }
+
+  .hero,
+  .panel,
+  .pane {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .hero h1 {
+    font-size: clamp(1.25rem, 7.5vw, 1.7rem);
+  }
+
+  .inline-grid,
+  .controls-main {
+    grid-template-columns: 1fr;
+  }
+
+  .optional-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row > button {
+    flex: 1 1 140px;
+  }
+
+  .result-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .result-header-right {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .gear-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .gear-row strong {
+    text-align: left;
+  }
+
+  .target-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .target-flag {
+    grid-column: 1 / -1;
+  }
+
+  .stat-item {
+    flex-wrap: wrap;
+  }
+
+  .deco-table,
+  .simple-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 560px) {
+  select[multiple],
+  select[size] {
+    min-height: 140px;
+  }
+
+  .info-link {
+    padding: 5px 9px;
+    font-size: 0.74rem;
+  }
+
+  .charm-actions {
+    align-items: stretch;
+  }
+
+  .charm-actions .tiny-btn {
+    flex: 1 1 130px;
   }
 }

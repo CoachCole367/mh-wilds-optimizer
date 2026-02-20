@@ -329,9 +329,9 @@ const validSkillKindFilters: SkillKindFilter[] = ["all", "armor", "set", "group"
 const parsedFlexPresetMode: FlexPresetMode = validFlexPresetModes.includes((flexPresetParam as FlexPresetMode) || "auto")
   ? ((flexPresetParam as FlexPresetMode) || "auto")
   : "auto";
-const parsedCharmMode: CharmMode = validCharmModes.includes((charmModeParam as CharmMode) || "suggest")
-  ? ((charmModeParam as CharmMode) || "suggest")
-  : "suggest";
+const parsedCharmMode: CharmMode = validCharmModes.includes((charmModeParam as CharmMode) || "off")
+  ? ((charmModeParam as CharmMode) || "off")
+  : "off";
 const parsedSkillKindFilter: SkillKindFilter = validSkillKindFilters.includes((skillKindFilterParam as SkillKindFilter) || "all")
   ? ((skillKindFilterParam as SkillKindFilter) || "all")
   : "all";
@@ -1931,7 +1931,7 @@ function shareUrl(): string {
   p.set("ag", state.allowGamma ? "1" : "0");
   p.set("t", String(state.threads));
   p.set("r", String(state.resultsPerThread));
-  if (state.charmMode !== "suggest") {
+  if (state.charmMode !== "off") {
     p.set("cm", state.charmMode);
   }
   if (state.charmSuggestCount !== DEFAULT_CHARM_SUGGESTION_OPTIONS.suggestCount) {
@@ -2264,7 +2264,7 @@ el.resultsPerThread.addEventListener("change", () => {
 });
 el.charmMode.addEventListener("change", () => {
   const value = el.charmMode.value as CharmMode;
-  state.charmMode = validCharmModes.includes(value) ? value : "suggest";
+  state.charmMode = validCharmModes.includes(value) ? value : "off";
   const defaults = defaultFiltersForCharmMode(state.charmMode);
   state.filterShowMeetsBase = defaults.showMeetsBase;
   state.filterShowMeetsWithBestCharm = defaults.showMeetsWithBestCharm;

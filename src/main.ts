@@ -565,7 +565,7 @@ function renderGearWithDecorations(result: BuildResult): string {
           : `<li><span class="slot-pill empty">No slots</span></li>`;
 
       return `
-<details class="gear-accordion">
+<details class="gear-accordion" open>
   <summary class="gear-row gear-row-summary">
     <span class="gear-row-left"><span class="gear-arrow" aria-hidden="true"></span>${plan.label}</span>
     <strong>${esc(plan.name)}</strong>

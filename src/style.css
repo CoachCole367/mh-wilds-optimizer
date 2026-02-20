@@ -393,8 +393,9 @@ button:disabled {
 }
 
 .desired-skill-cell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -417,18 +418,27 @@ button:disabled {
 
 .level-picker {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .level-btn {
-  min-width: 34px;
-  padding: 4px 8px;
+  min-width: 30px;
+  padding: 3px 7px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #fff7eb;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.desired-table th:nth-child(3),
+.desired-table td:nth-child(3) {
+  width: 94px;
+  white-space: nowrap;
 }
 
 .level-btn.active {

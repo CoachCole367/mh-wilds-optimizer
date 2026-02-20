@@ -927,7 +927,7 @@ function renderDesired(): void {
     el.desiredList.innerHTML = `<p class="muted">No target skills selected.</p>`;
     return;
   }
-  el.desiredList.innerHTML = `<table class="simple-table"><thead><tr><th>Skill</th><th>Target Level</th><th></th></tr></thead><tbody>${
+  el.desiredList.innerHTML = `<table class="simple-table desired-table"><thead><tr><th>Skill</th><th>Target Level</th><th></th></tr></thead><tbody>${
     state.desired
       .map((d) => {
         const skill = state.data!.skillsById[d.skillId];

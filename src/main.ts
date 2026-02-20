@@ -455,40 +455,104 @@ function requestedSkillChecklist(points: SkillPoints): string {
   return `<div class="target-list">${rows}</div>`;
 }
 
-function groupedDecorations(placements: BuildResult["placements"]): string {
-  if (!state.data || placements.length === 0) {
-    return `<p class="muted">No decorations required.</p>`;
+type PieceKey = "head" | "chest" | "arms" | "waist" | "legs" | "charm";
+type PlannedSlot = { slotSize: number; decoName: string | null };
+
+function pieceDecorationPlacement(result: BuildResult): string {
+  if (!state.data) {
+    return `<p class="muted">No decoration data.</p>`;
   }
 
-  const grouped = new Map<
-    string,
-    { slotSizeUsed: number; slotReq: number; name: string; count: number }
-  >();
-  for (const placement of placements) {
-    const decoration = state.data!.decorationsById[placement.decorationId];
-    const name = decoration?.name || `Decoration #${placement.decorationId}`;
-    const slotReq = decoration?.slotReq ?? placement.slotSizeUsed;
-    const key = `${placement.slotSizeUsed}-${placement.decorationId}`;
-    const existing = grouped.get(key);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      grouped.set(key, {
+  const pieceOrder: PieceKey[] = ["head", "chest", "arms", "waist", "legs", "charm"];
+  const pieceLabel: Record<PieceKey, string> = {
+    head: "Head",
+    chest: "Chest",
+    arms: "Arms",
+    waist: "Waist",
+    legs: "Legs",
+    charm: "Charm",
+  };
+
+  const pieceNames: Record<PieceKey, string> = {
+    head: state.data.armorById[result.armor.head]?.name || "?",
+    chest: state.data.armorById[result.armor.chest]?.name || "?",
+    arms: state.data.armorById[result.armor.arms]?.name || "?",
+    waist: state.data.armorById[result.armor.waist]?.name || "?",
+    legs: state.data.armorById[result.armor.legs]?.name || "?",
+    charm: state.data.charmRankById[result.charmRankId]?.name || "?",
+  };
+
+  const slotsByPiece: Record<PieceKey, PlannedSlot[]> = {
+    head: (state.data.armorById[result.armor.head]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+    chest: (state.data.armorById[result.armor.chest]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+    arms: (state.data.armorById[result.armor.arms]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+    waist: (state.data.armorById[result.armor.waist]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+    legs: (state.data.armorById[result.armor.legs]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+    charm: (state.data.charmRankById[result.charmRankId]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
+  };
+
+  for (const piece of pieceOrder) {
+    slotsByPiece[piece].sort((a, b) => b.slotSize - a.slotSize);
+  }
+
+  const placements = result.placements
+    .map((placement, index) => {
+      const decoration = state.data!.decorationsById[placement.decorationId];
+      return {
+        index,
         slotSizeUsed: placement.slotSizeUsed,
-        slotReq,
-        name,
-        count: 1,
-      });
+        slotReq: decoration?.slotReq ?? placement.slotSizeUsed,
+        decoName: decoration?.name || `Decoration #${placement.decorationId}`,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.slotSizeUsed - a.slotSizeUsed || b.slotReq - a.slotReq || a.decoName.localeCompare(b.decoName) || a.index - b.index,
+    );
+
+  for (const placement of placements) {
+    let assigned = false;
+
+    for (const piece of pieceOrder) {
+      const slot = slotsByPiece[piece].find((candidate) => candidate.decoName === null && candidate.slotSize === placement.slotSizeUsed);
+      if (!slot) {
+        continue;
+      }
+      slot.decoName = placement.decoName;
+      assigned = true;
+      break;
+    }
+
+    if (assigned) {
+      continue;
+    }
+
+    for (const piece of pieceOrder) {
+      const slot = slotsByPiece[piece].find((candidate) => candidate.decoName === null && candidate.slotSize >= placement.slotReq);
+      if (!slot) {
+        continue;
+      }
+      slot.decoName = placement.decoName;
+      break;
     }
   }
 
-  const rows = [...grouped.values()]
-    .sort((a, b) => a.slotSizeUsed - b.slotSizeUsed || a.slotReq - b.slotReq || a.name.localeCompare(b.name))
-    .map((item) => `<tr><td>S${item.slotSizeUsed}</td><td>S${item.slotReq}</td><td>${esc(item.name)}</td><td>x${item.count}</td></tr>`)
+  const rows = pieceOrder
+    .map((piece) => {
+      const slotCells = slotsByPiece[piece]
+        .map((slot) => {
+          if (slot.decoName === null) {
+            return `<span class="slot-pill empty">S${slot.slotSize} Empty</span>`;
+          }
+          return `<span class="slot-pill filled">S${slot.slotSize} ${esc(slot.decoName)}</span>`;
+        })
+        .join("");
+      const slotContent = slotCells.length > 0 ? slotCells : `<span class="slot-pill empty">No slots</span>`;
+      return `<tr><td>${pieceLabel[piece]}</td><td>${esc(pieceNames[piece])}</td><td><div class="piece-slot-list">${slotContent}</div></td></tr>`;
+    })
     .join("");
 
-  return `<table class="deco-table"><thead><tr><th>Used Slot</th><th>Req</th><th>Decoration</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>
-  <p class="muted">Used Slot is where the decoration was placed. A larger slot can hold a smaller requirement.</p>`;
+  return `<table class="piece-deco-table"><thead><tr><th>Piece</th><th>Gear</th><th>Slot Decorations</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderResults(): void {
@@ -546,8 +610,8 @@ function renderResults(): void {
     <section class="result-block">
       <h4>Requested Skills</h4>
       ${requestedSkillChecklist(r.skillTotals)}
-      <h4>Decorations Used</h4>
-      ${groupedDecorations(r.placements)}
+      <h4>Decoration Placement by Piece</h4>
+      ${pieceDecorationPlacement(r)}
     </section>
   </div>
 

@@ -441,6 +441,20 @@ button:disabled {
   white-space: nowrap;
 }
 
+.desired-table th:nth-child(2),
+.desired-table td:nth-child(2) {
+  width: 184px;
+  min-width: 184px;
+}
+
+.desired-table td:first-child {
+  min-width: 0;
+}
+
+.desired-skill-cell > span:first-child {
+  overflow-wrap: anywhere;
+}
+
 .level-btn.active {
   border-color: var(--accent);
   background: var(--accent-wash);

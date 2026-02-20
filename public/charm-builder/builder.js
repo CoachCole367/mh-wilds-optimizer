@@ -151,11 +151,11 @@ function createSkillRow(selectedSkillId = null, level = 1) {
   wrapper.dataset.rowId = rowId;
   wrapper.innerHTML = `
     <label>
-      Skill
+      <span>Skill</span>
       ${skillSelectMarkup(selectedSkillId)}
     </label>
     <label>
-      Level
+      <span>Level</span>
       <input class="skill-level" type="number" min="1" max="99" value="${clampInt(level, 1, 1, 99)}" />
     </label>
     <button type="button" class="remove-skill-row">Remove</button>

@@ -4,6 +4,7 @@ export type SkillPoints = Record<SkillId, number>;
 export type SlotSize = 1 | 2 | 3 | 4;
 export type Slots = SlotSize[];
 export type CharmMode = "off" | "suggest" | "owned";
+export type WeaponSetBonusPieces = Record<string, number>;
 
 export type ArmorKind = "head" | "chest" | "arms" | "waist" | "legs";
 
@@ -68,6 +69,8 @@ export type SkillInfo = {
   name: string;
   kind: string;
   maxLevel: number;
+  description: string;
+  rankDescriptions: Record<number, string>;
 };
 
 export type NormalizedData = {
@@ -136,6 +139,8 @@ export type BuildResult = {
   baseScore?: number;
   charmDeficitPoints?: number;
   charmCoveredPoints?: number;
+  requiresWeaponSetBonusRoll?: boolean;
+  requiredWeaponSetBonusSetId?: string;
 };
 
 export type OptimizeWorkerRequest = {
@@ -149,6 +154,7 @@ export type OptimizeWorkerRequest = {
   includeNearMissResults?: boolean;
   maxMissingPoints?: number;
   allowedHeadIds: number[];
+  weaponSetBonusPieces?: WeaponSetBonusPieces;
 };
 
 export type WorkerStats = {

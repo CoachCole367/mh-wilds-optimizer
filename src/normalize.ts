@@ -18,11 +18,13 @@ const GAMMA_PATTERN = /γ/i;
 
 type RawSkillRank = {
   level?: number;
+  description?: string | null;
 };
 
 type RawSkill = {
   id: number;
   name: string;
+  description?: string | null;
   kind?: string;
   ranks?: RawSkillRank[];
 };
@@ -186,8 +188,14 @@ function toSkillInfo(rawSkills: RawSkill[]): { skills: SkillInfo[]; byId: Record
       return {
         id: skill.id,
         name: skill.name,
+        description: skill.description ?? "",
         kind: skill.kind ?? "unknown",
         maxLevel: maxLevel > 0 ? maxLevel : 1,
+        rankDescriptions: Object.fromEntries(
+          (skill.ranks ?? [])
+            .map((rank) => [rank.level ?? 0, rank.description ?? ""] as const)
+            .filter(([level, description]) => level > 0 && description.length > 0),
+        ),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);

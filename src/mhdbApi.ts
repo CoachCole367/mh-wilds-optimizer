@@ -1,8 +1,15 @@
+import {
+  clearCacheEnvelope,
+  readCacheEnvelope,
+  type CacheEnvelope,
+  writeCacheEnvelope,
+} from "./cacheStore";
 import { normalizeWildsPayload, type RawWildsPayload } from "./normalize";
 import type { LoadDataResult, NormalizedData } from "./types";
+import { isPayloadValidationError, validateRawWildsPayload } from "./validatePayload";
 
 const API_BASE_URL = "https://wilds.mhdb.io";
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE_KEY_PREFIX = `mh-wilds-optimizer:${CACHE_VERSION}:locale`;
 
 type Projection = Record<string, true>;
@@ -11,18 +18,13 @@ type VersionResponse = {
   version: string;
 };
 
-type CacheEnvelope = {
-  locale: string;
-  version: string;
-  fetchedAt: number;
-  data: NormalizedData;
-};
-
 const SKILLS_PROJECTION: Projection = {
   id: true,
   name: true,
+  description: true,
   kind: true,
   "ranks.level": true,
+  "ranks.description": true,
 };
 
 const ARMOR_PROJECTION: Projection = {
@@ -81,6 +83,10 @@ function cacheKey(locale: string): string {
   return `${CACHE_KEY_PREFIX}:${locale}`;
 }
 
+function canUseLocalStorage(): boolean {
+  return typeof localStorage !== "undefined";
+}
+
 function serializeProjection(projection: Projection): string {
   return encodeURIComponent(JSON.stringify(projection));
 }
@@ -104,14 +110,31 @@ async function fetchLocaleArray<T>(locale: string, path: string, projection: Pro
   return fetchJson<T[]>(url);
 }
 
-function readCache(locale: string): CacheEnvelope | null {
-  const raw = localStorage.getItem(cacheKey(locale));
-  if (!raw) {
+function isCacheEnvelope(value: unknown, locale: string): value is CacheEnvelope<NormalizedData> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const parsed = value as Partial<CacheEnvelope<NormalizedData>>;
+  return (
+    parsed.locale === locale &&
+    typeof parsed.version === "string" &&
+    typeof parsed.fetchedAt === "number" &&
+    typeof parsed.data === "object" &&
+    parsed.data !== null
+  );
+}
+
+function readLocalStorageCache(locale: string): CacheEnvelope<NormalizedData> | null {
+  if (!canUseLocalStorage()) {
     return null;
   }
   try {
-    const parsed = JSON.parse(raw) as CacheEnvelope;
-    if (!parsed?.data || parsed.locale !== locale || typeof parsed.version !== "string") {
+    const raw = localStorage.getItem(cacheKey(locale));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isCacheEnvelope(parsed, locale)) {
       return null;
     }
     return parsed;
@@ -120,8 +143,33 @@ function readCache(locale: string): CacheEnvelope | null {
   }
 }
 
-function writeCache(envelope: CacheEnvelope): void {
-  localStorage.setItem(cacheKey(envelope.locale), JSON.stringify(envelope));
+function writeLocalStorageCache(envelope: CacheEnvelope<NormalizedData>): void {
+  if (!canUseLocalStorage()) {
+    return;
+  }
+  try {
+    localStorage.setItem(cacheKey(envelope.locale), JSON.stringify(envelope));
+  } catch {
+    // Ignore local storage write failures and rely on indexedDB when available.
+  }
+}
+
+async function readCache(locale: string): Promise<CacheEnvelope<NormalizedData> | null> {
+  const indexedEnvelope = await readCacheEnvelope<NormalizedData>(locale);
+  if (isCacheEnvelope(indexedEnvelope, locale)) {
+    return indexedEnvelope;
+  }
+  const localEnvelope = readLocalStorageCache(locale);
+  if (!localEnvelope) {
+    return null;
+  }
+  void writeCacheEnvelope(locale, localEnvelope);
+  return localEnvelope;
+}
+
+async function writeCache(envelope: CacheEnvelope<NormalizedData>): Promise<void> {
+  writeLocalStorageCache(envelope);
+  await writeCacheEnvelope(envelope.locale, envelope);
 }
 
 async function fetchAndNormalize(locale: string, version: string): Promise<NormalizedData> {
@@ -133,18 +181,24 @@ async function fetchAndNormalize(locale: string, version: string): Promise<Norma
     fetchLocaleArray<RawWildsPayload["charms"][number]>(locale, "/charms", CHARMS_PROJECTION),
   ]);
 
-  return normalizeWildsPayload(
-    { skills, armor, armorSets, decorations, charms },
-    { locale, version, fetchedAt: Date.now() },
-  );
+  const payload: RawWildsPayload = { skills, armor, armorSets, decorations, charms };
+  validateRawWildsPayload(payload);
+  return normalizeWildsPayload(payload, { locale, version, fetchedAt: Date.now() });
 }
 
 export function clearCachedLocale(locale: string): void {
-  localStorage.removeItem(cacheKey(locale));
+  if (canUseLocalStorage()) {
+    try {
+      localStorage.removeItem(cacheKey(locale));
+    } catch {
+      // Ignore clear failures.
+    }
+  }
+  void clearCacheEnvelope(locale);
 }
 
 export async function loadOptimizerData(locale: string, forceRefresh = false): Promise<LoadDataResult> {
-  const cached = readCache(locale);
+  const cached = await readCache(locale);
   let remoteVersion: string | null = null;
 
   try {
@@ -171,7 +225,7 @@ export async function loadOptimizerData(locale: string, forceRefresh = false): P
 
   try {
     const data = await fetchAndNormalize(locale, nextVersion);
-    writeCache({
+    await writeCache({
       locale,
       version: data.version,
       fetchedAt: data.fetchedAt,
@@ -187,6 +241,9 @@ export async function loadOptimizerData(locale: string, forceRefresh = false): P
         data: cached.data,
         source: "cache-fallback",
       };
+    }
+    if (isPayloadValidationError(error)) {
+      throw new Error("Data format changed upstream. Please try again later.");
     }
     throw error;
   }

@@ -6,7 +6,7 @@
     <title>FAQ | MH Wilds Skill-First Gear Optimizer</title>
     <meta
       name="description"
-      content="Frequently asked questions for the MH Wilds Skill-First Gear Optimizer."
+      content="Practical FAQ for the MH Wilds Skill-First Gear Optimizer: controls, charm modes, weapon set bonus roll behavior, performance, and sharing."
     />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
     <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/faq/" />
@@ -22,7 +22,15 @@
             "name": "What does this optimizer calculate?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "It searches armor, charm, and decoration combinations that meet selected skill targets and ranks valid results by defense and slot efficiency."
+              "text": "It searches armor, charm, decoration, and optional weapon-assisted set bonus combinations that satisfy your selected skill targets and then ranks valid results."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Which settings should I choose first?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Start with Charm Mode Off, alpha/gamma allowed, all decorations enabled, and near-miss off. Once that baseline works, enable Suggest After and near-miss for guided theorycraft."
             }
           },
           {
@@ -35,18 +43,10 @@
           },
           {
             "@type": "Question",
-            "name": "Are suggested RNG charms real charms I own?",
+            "name": "What does Allow Near-Miss Solver Results do?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "No. Suggest After shows theoretical templates designed to complete deficits. They are labeled as theoretical and are not automatically owned."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Can set or group skills be rolled on RNG charms?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. Set and group skills are excluded from RNG charm suggestions. Suggested charm skills are limited to rollable skills."
+              "text": "It keeps builds that are slightly short on requested skills so completion modes can still evaluate them. Near-Miss Max Missing Points controls how short they may be."
             }
           },
           {
@@ -54,31 +54,39 @@
             "name": "Why do I get no results?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Common causes are too many high targets at once, strict armor/deco filters, or near-miss disabled. Lower one or two targets, expand decoration pool, or enable near-miss."
+              "text": "Common causes are strict targets, narrow decoration pools, or restrictive filters. Lower one or two targets, broaden decoration selections, or enable near-miss."
             }
           },
           {
             "@type": "Question",
-            "name": "What does Allow Near-Miss Solver Results do?",
+            "name": "Do I need to enable a weapon set-bonus toggle?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "It keeps builds that are slightly short on requested skills so charm processing can complete them. Near-Miss Max Missing Points controls how short they may be."
+              "text": "No. The optimizer automatically checks relevant Artian weapon plus one set-piece coverage when your requested skills include set or group bonus targets. This is deterministic modeling and does not estimate roll chance."
             }
           },
           {
             "@type": "Question",
-            "name": "Why might HIGH charm dependence not appear?",
+            "name": "What does Requires weapon set bonus roll mean?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "If a build already meets all targets before charm help, dependence is LOW or NONE. HIGH only appears when a build meaningfully relies on charm completion."
+              "text": "It means that build fails at least one requirement if the weapon set bonus contribution is removed. The result depends on your selected weapon roll assumption."
             }
           },
           {
             "@type": "Question",
-            "name": "What performance settings are recommended?",
+            "name": "Can set or group skills be rolled on RNG charms?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Start with default Max Threads (about 80 percent of available threads) and Max Results Per Thread around 25 to 50. Increase gradually if your machine stays responsive."
+              "text": "No. Set and group skills are excluded from RNG charm suggestions. Suggested templates only use rollable skill types."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Do shared links preserve weapon set-bonus behavior?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Share links preserve your requested targets and filters, and automatic weapon set-bonus inference runs from that same state."
             }
           },
           {
@@ -86,22 +94,38 @@
             "name": "How do I use Owned Charm Builder with the optimizer?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Create or import charms in Owned Charm Builder, then switch optimizer Charm Mode to Owned. The optimizer reads the same local storage data."
+              "text": "Create or import charms in Owned Charm Builder, then switch optimizer Charm Mode to Owned. The optimizer reads the same local browser storage."
             }
           },
           {
             "@type": "Question",
-            "name": "Where does the gear data come from?",
+            "name": "What performance settings are recommended?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "The app uses MHDB Wilds API data for armor, armor sets, skills, decorations, and charms."
+              "text": "Start near 60 to 80 percent of available threads and Max Results Per Thread around 25 to 50. Increase gradually while monitoring responsiveness."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where does data come from and what is stored locally?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Data comes from MHDB Wilds API endpoints. The app caches normalized data locally for faster reloads, and owned charm data stays in your browser."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does this tool calculate weapon damage or roll probabilities?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. It is a build feasibility planner for skills, set bonuses, and completion paths. It does not simulate hunt DPS or roll probability."
             }
           }
         ]
       }
     </script>
   </head>
-  <body>
+  <body class="theme-mhwilds">
     <main class="site-shell">
       <section class="site-hero">
         <p class="site-kicker">MHWilds Optimizer</p>
@@ -114,81 +138,117 @@
         </nav>
       </section>
 
-      <section class="site-panel">
-        <details class="faq-item" open>
-          <summary>What does this optimizer calculate?</summary>
-          <p>
-            It searches armor, charm, and decoration combinations that meet selected skill targets and
-            ranks valid results by defense and slot efficiency.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>What is the difference between Charm Mode Off, Suggest After, and Owned?</summary>
-          <p>
-            Off disables charm post-processing. Suggest After adds theoretical RNG charm templates after
-            builds are generated. Owned evaluates your imported owned charm list.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Are suggested RNG charms real charms I own?</summary>
-          <p>
-            No. Suggest After outputs theoretical templates intended to complete missing targets. They are
-            not automatically treated as owned charms.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Can set or group skills be rolled on RNG charms?</summary>
-          <p>
-            No. Set and group skills are excluded from RNG charm suggestions. Only rollable skill types
-            are used for suggested templates.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Why do I get no results?</summary>
-          <p>
-            Typical causes are too many high targets at once, strict armor/deco filters, or near-miss
-            disabled. Try lowering one or two targets, broadening your decoration pool, or enabling
-            near-miss results.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>What does Allow Near-Miss Solver Results do?</summary>
-          <p>
-            It keeps builds that are slightly short on requested levels so charm processing can complete
-            them. Near-Miss Max Missing Points controls how short those builds may be.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Why might HIGH charm dependence not appear?</summary>
-          <p>
-            HIGH appears only when a build materially depends on charm completion. If required deficits
-            are already zero before charm help, dependence will be LOW or NONE.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>What performance settings are recommended?</summary>
-          <p>
-            Start with default Max Threads (about 80% of available threads) and Max Results Per Thread
-            around 25 to 50. Raise values gradually while watching responsiveness.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>How do I use Owned Charm Builder with the optimizer?</summary>
-          <p>
-            Create/import charms in Owned Charm Builder, then set Charm Mode to Owned in the optimizer.
-            Both pages use the same local storage key.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Where does the gear data come from?</summary>
-          <p>
-            The app uses MHDB Wilds API data for armor, armor sets, skills, decorations, and charms.
-          </p>
-        </details>
-        <details class="faq-item">
-          <summary>Does this tool calculate weapon damage?</summary>
-          <p>No. This project is skill-first build planning for armor sets and related setup.</p>
-        </details>
+      <section class="site-panel site-stack">
+        <h2 class="section-title"><span class="section-icon icon-skills" aria-hidden="true"></span><span>Frequently Asked Questions</span></h2>
+        <p class="muted">Focused answers to the controls and behaviors most users ask about.</p>
+
+        <div class="block">
+          <h3 class="section-title"><span class="section-icon icon-results" aria-hidden="true"></span><span>Getting Started</span></h3>
+          <details class="faq-item" open>
+            <summary>What does this optimizer calculate?</summary>
+            <p>
+              It searches armor, charm, decoration, and optional weapon-assisted set bonus combinations
+              that satisfy your selected skill targets and then ranks valid results.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Which settings should I choose first?</summary>
+            <p>
+              Start with Charm Mode = Off, Allow alpha/gamma = On, all decorations selected, and near-miss
+              off. Once you get a stable baseline, enable Suggest After and near-miss for guided expansion.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>What is the difference between Charm Mode Off, Suggest After, and Owned?</summary>
+            <p>
+              Off disables charm post-processing. Suggest After adds theoretical RNG charm templates after
+              builds are generated. Owned evaluates your imported owned charm list.
+            </p>
+          </details>
+        </div>
+
+        <div class="block">
+          <h3 class="section-title"><span class="section-icon icon-skills" aria-hidden="true"></span><span>Solver Behavior</span></h3>
+          <details class="faq-item">
+            <summary>What does Allow Near-Miss Solver Results do?</summary>
+            <p>
+              It keeps builds that are slightly short on requested skills so completion modes can still
+              evaluate them. Near-Miss Max Missing Points controls how short those builds may be.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Why do I get no results?</summary>
+            <p>
+              Common causes are strict targets, narrow decoration pools, or restrictive filters. Lower
+              one or two targets, broaden decoration selections, or enable near-miss.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Can set or group skills be rolled on RNG charms?</summary>
+            <p>
+              No. Set and group skills are excluded from RNG charm suggestions. Suggested templates only
+              use rollable skill types.
+            </p>
+          </details>
+        </div>
+
+        <div class="block">
+          <h3 class="section-title"><span class="section-icon icon-charm" aria-hidden="true"></span><span>Weapon Set Bonus Roll</span></h3>
+          <details class="faq-item">
+            <summary>Do I need to enable a weapon set-bonus toggle?</summary>
+            <p>
+              No. The optimizer automatically checks relevant Artian weapon +1 set-piece coverage
+              when your requested skills include set/group bonus targets. This is deterministic
+              modeling only. It does not estimate roll probability.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>What does Requires weapon set bonus roll mean?</summary>
+            <p>
+              It means that build fails at least one requirement if the weapon contribution is removed.
+              The result depends on your selected weapon roll assumption.
+            </p>
+          </details>
+        </div>
+
+        <div class="block">
+          <h3 class="section-title"><span class="section-icon icon-data" aria-hidden="true"></span><span>Data, Sharing, and Performance</span></h3>
+          <details class="faq-item">
+            <summary>Do shared links preserve weapon set-bonus behavior?</summary>
+            <p>
+              Yes. Share links preserve requested targets and filters, and automatic weapon set-bonus
+              inference runs from that same state.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>How do I use Owned Charm Builder with the optimizer?</summary>
+            <p>
+              Create or import charms in Owned Charm Builder, then switch optimizer Charm Mode to Owned.
+              The optimizer reads the same local browser storage data.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>What performance settings are recommended?</summary>
+            <p>
+              Start near 60 to 80 percent of available threads and Max Results Per Thread around 25 to 50.
+              Increase gradually while monitoring responsiveness.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Where does data come from and what is stored locally?</summary>
+            <p>
+              Data comes from MHDB Wilds API endpoints. The app caches normalized data locally for faster
+              reloads, and owned charm data stays in your browser.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Does this tool calculate weapon damage or roll probabilities?</summary>
+            <p>
+              No. It is a build feasibility planner for skills, set bonuses, and completion paths. It
+              does not simulate hunt DPS or roll probability.
+            </p>
+          </details>
+        </div>
       </section>
       <p class="footer-note">MH Wilds Skill-First Gear Optimizer</p>
     </main>

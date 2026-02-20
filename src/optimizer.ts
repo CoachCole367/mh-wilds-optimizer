@@ -12,15 +12,32 @@ import type {
   SkillPoints,
   SlotSize,
   WorkerStats,
+  WeaponSetBonusPieces,
 } from "./types";
+import { normalizeWeaponSetBonusPieces } from "./weaponSetBonus";
 
 const ARMOR_ORDER: ArmorKind[] = ["head", "chest", "arms", "waist", "legs"];
+const MIN_DECORATION_MEMO_ENTRIES = 20_000;
+const BASE_DECORATION_MEMO_ENTRIES = 100_000;
+const MIN_SET_BONUS_MEMO_ENTRIES = 6_000;
+const BASE_SET_BONUS_MEMO_ENTRIES = 30_000;
 
 type SkillIndexById = Record<number, number>;
 
 type DecorationData = {
   bySkill: Record<number, Decoration[]>;
   byId: Record<number, Decoration>;
+};
+
+type DecorationUpperBound = Record<number, [0, number, number, number, number]>;
+type DecorationTotalUpperBound = [0, number, number, number, number];
+type SlotCountVector = [0, number, number, number, number];
+
+type CharmEvalData = {
+  charm: CharmRank;
+  requestedLevels: number[];
+  slotCounts: SlotCountVector;
+  slotCapacity: number;
 };
 
 type DeficitState = {
@@ -34,6 +51,92 @@ type SetBonusProvider = {
   setId: number;
   thresholds: Array<{ pieces: number; level: number }>;
 };
+
+type SetPieceCounts = Record<string, number>;
+
+function resolveDecorationMemoLimit(skillCount: number, includeNearMissResults: boolean): number {
+  const pressureScale = includeNearMissResults ? 0.7 : 1;
+  const skillScale = Math.min(1, 8 / Math.max(1, skillCount));
+  return Math.max(MIN_DECORATION_MEMO_ENTRIES, Math.floor(BASE_DECORATION_MEMO_ENTRIES * pressureScale * skillScale));
+}
+
+function resolveSetBonusMemoLimit(skillCount: number, includeNearMissResults: boolean): number {
+  const pressureScale = includeNearMissResults ? 0.8 : 1;
+  const skillScale = Math.min(1, 8 / Math.max(1, skillCount));
+  return Math.max(MIN_SET_BONUS_MEMO_ENTRIES, Math.floor(BASE_SET_BONUS_MEMO_ENTRIES * pressureScale * skillScale));
+}
+
+function memoSetWithCap<T>(memo: Map<string, T>, key: string, value: T, maxEntries: number): void {
+  if (maxEntries > 0) {
+    while (memo.size >= maxEntries) {
+      const oldestKey = memo.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      memo.delete(oldestKey);
+    }
+  }
+  memo.set(key, value);
+}
+
+function buildDecorationUpperBounds(
+  decorationData: DecorationData,
+  requestedSkillIds: number[],
+): DecorationUpperBound {
+  const bySkill: DecorationUpperBound = {};
+  for (const skillId of requestedSkillIds) {
+    const maxGainBySlot: [0, number, number, number, number] = [0, 0, 0, 0, 0];
+    const candidates = decorationData.bySkill[skillId] ?? [];
+    for (const decoration of candidates) {
+      const gain = decoration.skills[skillId] ?? 0;
+      if (gain <= 0) {
+        continue;
+      }
+      for (let slotSize = decoration.slotReq; slotSize <= 4; slotSize += 1) {
+        if (gain > maxGainBySlot[slotSize as SlotSize]) {
+          maxGainBySlot[slotSize as SlotSize] = gain;
+        }
+      }
+    }
+    bySkill[skillId] = maxGainBySlot;
+  }
+  return bySkill;
+}
+
+function buildDecorationTotalUpperBound(
+  decorationData: DecorationData,
+  requestedSkillIds: number[],
+): DecorationTotalUpperBound {
+  const maxTotalGainBySlot: DecorationTotalUpperBound = [0, 0, 0, 0, 0];
+  const seenDecorationIds = new Set<number>();
+
+  for (const skillId of requestedSkillIds) {
+    for (const decoration of decorationData.bySkill[skillId] ?? []) {
+      if (seenDecorationIds.has(decoration.id)) {
+        continue;
+      }
+      seenDecorationIds.add(decoration.id);
+      let totalRequestedGain = 0;
+      for (const requestedSkillId of requestedSkillIds) {
+        const gain = decoration.skills[requestedSkillId] ?? 0;
+        if (gain > 0) {
+          totalRequestedGain += gain;
+        }
+      }
+      if (totalRequestedGain <= 0) {
+        continue;
+      }
+      for (let slotSize = decoration.slotReq; slotSize <= 4; slotSize += 1) {
+        const slot = slotSize as SlotSize;
+        if (totalRequestedGain > maxTotalGainBySlot[slot]) {
+          maxTotalGainBySlot[slot] = totalRequestedGain;
+        }
+      }
+    }
+  }
+
+  return maxTotalGainBySlot;
+}
 
 function nowMs(): number {
   if (typeof performance !== "undefined") {
@@ -290,8 +393,8 @@ function mapRequestedSkillLevels(skillIds: number[], points: SkillPoints): numbe
   return skillIds.map((skillId) => points[skillId] ?? 0);
 }
 
-function slotCountsFromSlots(slots: number[]): number[] {
-  const slotCounts = [0, 0, 0, 0, 0];
+function slotCountsFromSlots(slots: number[]): SlotCountVector {
+  const slotCounts: SlotCountVector = [0, 0, 0, 0, 0];
   for (const slot of slots) {
     if (slot >= 1 && slot <= 4) {
       slotCounts[slot] += 1;
@@ -314,13 +417,23 @@ function sumDeficits(deficits: number[]): number {
   return total;
 }
 
-function mostUrgentSkillIndex(deficits: number[]): number {
+function mostUrgentSkillIndex(deficits: number[], skillIds: number[], decorationData: DecorationData): number {
   let bestIndex = -1;
-  let bestValue = 0;
+  let bestCandidateCount = Number.POSITIVE_INFINITY;
+  let bestDeficit = 0;
   for (let i = 0; i < deficits.length; i += 1) {
-    const value = deficits[i];
-    if (value > bestValue) {
-      bestValue = value;
+    const deficit = deficits[i];
+    if (deficit <= 0) {
+      continue;
+    }
+    const candidates = decorationData.bySkill[skillIds[i]] ?? [];
+    const candidateCount = candidates.length;
+    if (
+      candidateCount < bestCandidateCount ||
+      (candidateCount === bestCandidateCount && deficit > bestDeficit)
+    ) {
+      bestCandidateCount = candidateCount;
+      bestDeficit = deficit;
       bestIndex = i;
     }
   }
@@ -337,6 +450,7 @@ function buildDecorationData(
   const allowedSet = new Set(allowedDecorationIds);
   const bySkill: Record<number, Decoration[]> = {};
   const byId: Record<number, Decoration> = {};
+  const coverageByDecorationId: Record<number, number> = {};
 
   for (const skillId of requestedSkillIds) {
     bySkill[skillId] = [];
@@ -350,23 +464,25 @@ function buildDecorationData(
       continue;
     }
     byId[decoration.id] = decoration;
+    let coverage = 0;
     for (const skillId of requestedSkillSet) {
       if ((decoration.skills[skillId] ?? 0) > 0) {
         bySkill[skillId].push(decoration);
+        coverage += 1;
       }
     }
+    coverageByDecorationId[decoration.id] = coverage;
   }
 
   for (const skillId of requestedSkillIds) {
     bySkill[skillId].sort((a, b) => {
-      const coverageA = requestedSkillIds.reduce(
-        (sum, requestSkillId) => sum + ((a.skills[requestSkillId] ?? 0) > 0 ? 1 : 0),
-        0,
-      );
-      const coverageB = requestedSkillIds.reduce(
-        (sum, requestSkillId) => sum + ((b.skills[requestSkillId] ?? 0) > 0 ? 1 : 0),
-        0,
-      );
+      const gainA = a.skills[skillId] ?? 0;
+      const gainB = b.skills[skillId] ?? 0;
+      if (gainA !== gainB) {
+        return gainB - gainA;
+      }
+      const coverageA = coverageByDecorationId[a.id] ?? 0;
+      const coverageB = coverageByDecorationId[b.id] ?? 0;
       if (coverageA !== coverageB) {
         return coverageB - coverageA;
       }
@@ -397,9 +513,13 @@ function assignDecorations(
   slotCounts: number[],
   maxRemainingMissing: number,
   decorationData: DecorationData,
+  decorationUpperBounds: DecorationUpperBound,
+  decorationTotalUpperBound: DecorationTotalUpperBound,
   memo: Map<string, DecorationPlacement[] | null>,
+  memoMaxEntries: number,
 ): DecorationPlacement[] | null {
-  if (sumDeficits(deficits) <= maxRemainingMissing) {
+  const totalDeficit = sumDeficits(deficits);
+  if (totalDeficit <= maxRemainingMissing) {
     return [];
   }
 
@@ -409,10 +529,54 @@ function assignDecorations(
     return memo.get(key) ?? null;
   }
 
-  const urgentIndex = mostUrgentSkillIndex(deficits);
+  const optimisticTotalGain =
+    slotCounts[1] * decorationTotalUpperBound[1] +
+    slotCounts[2] * decorationTotalUpperBound[2] +
+    slotCounts[3] * decorationTotalUpperBound[3] +
+    slotCounts[4] * decorationTotalUpperBound[4];
+  if (optimisticTotalGain + maxRemainingMissing < totalDeficit) {
+    memoSetWithCap(memo, key, null, memoMaxEntries);
+    return null;
+  }
+
+  const urgentIndex = mostUrgentSkillIndex(deficits, skillIds, decorationData);
   if (urgentIndex < 0) {
-    memo.set(key, []);
+    memoSetWithCap(memo, key, [], memoMaxEntries);
     return [];
+  }
+
+  const checkAllSkills = skillIds.length <= 8;
+  if (checkAllSkills) {
+    for (let i = 0; i < deficits.length; i += 1) {
+      const deficit = deficits[i];
+      if (deficit <= 0) {
+        continue;
+      }
+      const skillId = skillIds[i];
+      const gains = decorationUpperBounds[skillId] ?? [0, 0, 0, 0, 0];
+      const optimisticGain =
+        slotCounts[1] * gains[1] +
+        slotCounts[2] * gains[2] +
+        slotCounts[3] * gains[3] +
+        slotCounts[4] * gains[4];
+      if (optimisticGain + maxRemainingMissing < deficit) {
+        memoSetWithCap(memo, key, null, memoMaxEntries);
+        return null;
+      }
+    }
+  } else {
+    const urgentSkillId = skillIds[urgentIndex];
+    const urgentDeficit = deficits[urgentIndex];
+    const gains = decorationUpperBounds[urgentSkillId] ?? [0, 0, 0, 0, 0];
+    const optimisticGain =
+      slotCounts[1] * gains[1] +
+      slotCounts[2] * gains[2] +
+      slotCounts[3] * gains[3] +
+      slotCounts[4] * gains[4];
+    if (optimisticGain + maxRemainingMissing < urgentDeficit) {
+      memoSetWithCap(memo, key, null, memoMaxEntries);
+      return null;
+    }
   }
 
   const urgentSkillId = skillIds[urgentIndex];
@@ -458,7 +622,10 @@ function assignDecorations(
       nextSlotCounts,
       maxRemainingMissing,
       decorationData,
+      decorationUpperBounds,
+      decorationTotalUpperBound,
       memo,
+      memoMaxEntries,
     );
     if (subPlacement !== null) {
       const placement: DecorationPlacement = {
@@ -466,37 +633,77 @@ function assignDecorations(
         decorationId: decoration.id,
       };
       const solved = [placement, ...subPlacement];
-      memo.set(key, solved);
+      memoSetWithCap(memo, key, solved, memoMaxEntries);
       return solved;
     }
   }
 
-  memo.set(key, null);
+  memoSetWithCap(memo, key, null, memoMaxEntries);
   return null;
 }
 
+function buildArmorSetPieceCounts(armorPieces: ArmorPiece[]): SetPieceCounts {
+  const counts: SetPieceCounts = {};
+  for (const piece of armorPieces) {
+    if (piece.armorSetId === null) {
+      continue;
+    }
+    const setId = String(piece.armorSetId);
+    counts[setId] = (counts[setId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function mergeArmorAndWeaponSetPieceCounts(
+  armorSetCounts: SetPieceCounts,
+  weaponSetBonusPieces: WeaponSetBonusPieces,
+): SetPieceCounts {
+  const merged: SetPieceCounts = { ...armorSetCounts };
+  for (const [setId, rawCount] of Object.entries(weaponSetBonusPieces)) {
+    const count = Math.floor(Number(rawCount));
+    if (!setId || !Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+    merged[setId] = (merged[setId] ?? 0) + count;
+  }
+  return merged;
+}
+
+function toSingleWeaponSetBonusPieces(setId: string): WeaponSetBonusPieces {
+  if (!setId) {
+    return {};
+  }
+  return { [setId]: 1 };
+}
+
 function accumulateBonusRanks(target: SkillPoints, ranks: ArmorSetBonusRank[], pieceCount: number): void {
+  const bestBySkill: SkillPoints = {};
   for (const rank of ranks) {
-    if (pieceCount >= rank.pieces) {
-      addSkillPoints(target, rank.skills);
+    if (pieceCount < rank.pieces) {
+      continue;
+    }
+    for (const key in rank.skills) {
+      const skillId = Number(key);
+      const level = rank.skills[skillId] ?? 0;
+      if (level <= 0) {
+        continue;
+      }
+      if ((bestBySkill[skillId] ?? 0) < level) {
+        bestBySkill[skillId] = level;
+      }
     }
   }
+  addSkillPoints(target, bestBySkill);
 }
 
 function computeSetAndGroupBonusSkills(
   armorPieces: ArmorPiece[],
   armorSetsById: OptimizeWorkerRequest["data"]["armorSetsById"],
+  weaponSetBonusPieces: WeaponSetBonusPieces,
 ): SkillPoints {
-  const setCounts: Record<number, number> = {};
+  const setCounts = mergeArmorAndWeaponSetPieceCounts(buildArmorSetPieceCounts(armorPieces), weaponSetBonusPieces);
   const groupCounts: Record<number, number> = {};
   const groupRanksById: Record<number, ArmorSetBonusRank[]> = {};
-
-  for (const piece of armorPieces) {
-    if (piece.armorSetId === null) {
-      continue;
-    }
-    setCounts[piece.armorSetId] = (setCounts[piece.armorSetId] ?? 0) + 1;
-  }
 
   for (const key in setCounts) {
     const setId = Number(key);
@@ -505,7 +712,7 @@ function computeSetAndGroupBonusSkills(
       continue;
     }
     const groupId = armorSet.groupBonusId;
-    groupCounts[groupId] = (groupCounts[groupId] ?? 0) + (setCounts[setId] ?? 0);
+    groupCounts[groupId] = (groupCounts[groupId] ?? 0) + (setCounts[key] ?? 0);
     const existingRanks = groupRanksById[groupId];
     if (!existingRanks || existingRanks.length < armorSet.groupBonusRanks.length) {
       groupRanksById[groupId] = armorSet.groupBonusRanks;
@@ -520,7 +727,7 @@ function computeSetAndGroupBonusSkills(
     if (!armorSet) {
       continue;
     }
-    accumulateBonusRanks(bonusSkills, armorSet.bonusRanks, setCounts[setId]);
+    accumulateBonusRanks(bonusSkills, armorSet.bonusRanks, setCounts[key]);
   }
 
   for (const key in groupCounts) {
@@ -604,6 +811,17 @@ function tryInsertResult(results: BuildResult[], candidate: BuildResult, maxResu
     results[results.length - 1] = candidate;
     results.sort(compareBuildResults);
   }
+}
+
+function wouldInsertResult(results: BuildResult[], candidate: BuildResult, maxResults: number): boolean {
+  if (maxResults <= 0) {
+    return false;
+  }
+  if (results.length < maxResults) {
+    return true;
+  }
+  const worst = results[results.length - 1];
+  return compareBuildResults(candidate, worst) < 0;
 }
 
 function toRequestedTargets(desiredSkills: OptimizeWorkerRequest["desiredSkills"], skillIds: number[]): number[] {
@@ -750,6 +968,17 @@ export function optimizeBuilds(
       error: "At least one target skill is required.",
     };
   }
+  const requestedWeaponSetBonusPieces = normalizeWeaponSetBonusPieces(request.weaponSetBonusPieces);
+  const weaponSetBonusSetIds = Object.keys(requestedWeaponSetBonusPieces).filter((setId) => !!setId);
+  const weaponSetBonusCandidateSetIdSet = new Set<string>(weaponSetBonusSetIds);
+  const hasWeaponSetBonusPieces = weaponSetBonusSetIds.length > 0;
+  const weaponSetBonusOptions: Array<{ setId: string; pieces: WeaponSetBonusPieces }> = [
+    { setId: "", pieces: {} },
+    ...weaponSetBonusSetIds.map((setId) => ({
+      setId,
+      pieces: toSingleWeaponSetBonusPieces(setId),
+    })),
+  ];
 
   const allowedHeadSet = new Set<number>(request.allowedHeadIds);
   const setAndGroupBonusSkillIds = collectSetAndGroupBonusSkillIds(request.data.armorSetsById);
@@ -768,12 +997,18 @@ export function optimizeBuilds(
 
   for (const kind of ARMOR_ORDER) {
     const allowed = request.data.armorByKind[kind].filter((piece) => armorAllowed(piece, request.allowAlpha, request.allowGamma));
-    const constrained = kind === "head" ? allowed.filter((piece) => allowedHeadSet.has(piece.id)) : allowed;
-    filteredByKind[kind] = pruneDominatedArmor(
-      constrained,
-      requestedSkillIds,
-      relevantSetIds,
-    );
+    if (kind === "head") {
+      // Prune against the full allowed head pool first, then shard.
+      // This keeps dominance pruning quality stable regardless of worker chunking.
+      const globallyPrunedHeads = pruneDominatedArmor(allowed, requestedSkillIds, relevantSetIds);
+      filteredByKind.head = globallyPrunedHeads.filter((piece) => allowedHeadSet.has(piece.id));
+    } else {
+      filteredByKind[kind] = pruneDominatedArmor(
+        allowed,
+        requestedSkillIds,
+        relevantSetIds,
+      );
+    }
     if (filteredByKind[kind].length === 0) {
       stats.durationMs = nowMs() - startedAt;
       return {
@@ -793,6 +1028,12 @@ export function optimizeBuilds(
       stats,
     };
   }
+  const charmEvalData: CharmEvalData[] = prunedCharms.map((charm) => ({
+    charm,
+    requestedLevels: requestedSkillIds.map((skillId) => charm.skills[skillId] ?? 0),
+    slotCounts: slotCountsFromSlots(charm.slots),
+    slotCapacity: charm.slots.reduce((sum, value) => sum + value, 0),
+  }));
 
   const totalArmorCombos =
     filteredByKind.head.length *
@@ -800,7 +1041,7 @@ export function optimizeBuilds(
     filteredByKind.arms.length *
     filteredByKind.waist.length *
     filteredByKind.legs.length;
-  const totalCandidates = totalArmorCombos * prunedCharms.length;
+  const totalCandidates = totalArmorCombos * charmEvalData.length;
   let lastProgressSentAt = startedAt;
 
   function emitProgress(force = false): void {
@@ -819,7 +1060,7 @@ export function optimizeBuilds(
     onProgress({
       completedArmorCombos: stats.completedArmorCombos,
       totalArmorCombos,
-      evaluatedCandidates: stats.completedArmorCombos * prunedCharms.length,
+      evaluatedCandidates: stats.completedArmorCombos * charmEvalData.length,
       totalCandidates,
       feasibleBuilds: stats.feasibleBuilds,
       branchesVisited: stats.branchesVisited,
@@ -862,11 +1103,16 @@ export function optimizeBuilds(
   }
 
   const decorationMemo = new Map<string, DecorationPlacement[] | null>();
+  const decorationMemoLimit = resolveDecorationMemoLimit(requestedSkillIds.length, includeNearMissResults);
+  const decorationUpperBounds = buildDecorationUpperBounds(decorationData, requestedSkillIds);
+  const decorationTotalUpperBound = buildDecorationTotalUpperBound(decorationData, requestedSkillIds);
   const topResults: BuildResult[] = [];
   const selected: Partial<Record<ArmorKind, ArmorPiece>> = {};
   const currentRequested = requestedSkillIds.map(() => 0);
-  const selectedSetCounts: Record<number, number> = {};
+  const baseSelectedSetCounts: Record<string, number> = {};
+  const selectedSetCounts: Record<string, number> = {};
   const setBonusUpperMemo = new Map<string, number>();
+  const setBonusMemoLimit = resolveSetBonusMemoLimit(requestedSkillIds.length, includeNearMissResults);
   emitProgress(true);
 
   function maxSetBonusFromCurrentCounts(skillId: number, remainingPieces: number): number {
@@ -875,7 +1121,7 @@ export function optimizeBuilds(
       return 0;
     }
 
-    const countsKey = providers.map((provider) => selectedSetCounts[provider.setId] ?? 0).join(",");
+    const countsKey = providers.map((provider) => selectedSetCounts[String(provider.setId)] ?? 0).join(",");
     const memoKey = `${skillId}|${remainingPieces}|${countsKey}`;
     const cached = setBonusUpperMemo.get(memoKey);
     if (cached !== undefined) {
@@ -892,7 +1138,9 @@ export function optimizeBuilds(
           continue;
         }
         for (let add = 0; used + add <= remainingPieces; add += 1) {
-          const pieceCount = (selectedSetCounts[provider.setId] ?? 0) + add;
+          const providerSetId = String(provider.setId);
+          const weaponBonus = weaponSetBonusCandidateSetIdSet.has(providerSetId) ? 1 : 0;
+          const pieceCount = (selectedSetCounts[providerSetId] ?? 0) + add + weaponBonus;
           let level = 0;
           for (const threshold of provider.thresholds) {
             if (pieceCount >= threshold.pieces && threshold.level > level) {
@@ -914,13 +1162,19 @@ export function optimizeBuilds(
         best = value;
       }
     }
-    setBonusUpperMemo.set(memoKey, best);
+    memoSetWithCap(setBonusUpperMemo, memoKey, best, setBonusMemoLimit);
     return best;
   }
 
   function canStillHitTargets(kindIndex: number): boolean {
     const remainingPieces = ARMOR_ORDER.length - kindIndex;
-    const allowedMissingForBound = includeNearMissResults ? maxMissingPoints : 0;
+    let allowedMissingForBound = includeNearMissResults ? maxMissingPoints : 0;
+    if (topResults.length >= request.maxResults && topResults.length > 0) {
+      const worstMissing = topResults[topResults.length - 1].missingRequestedPoints ?? 0;
+      if (worstMissing < allowedMissingForBound) {
+        allowedMissingForBound = worstMissing;
+      }
+    }
     for (let i = 0; i < requestedSkillIds.length; i += 1) {
       const skillId = requestedSkillIds[i];
       const setBonusUpper =
@@ -937,21 +1191,25 @@ export function optimizeBuilds(
 
   function evaluateCompleteArmorSet(): void {
     stats.completedArmorCombos += 1;
-    const armorPieces: ArmorPiece[] = ARMOR_ORDER.map((kind) => selected[kind]).filter(
-      (piece): piece is ArmorPiece => piece !== undefined,
-    );
-    if (armorPieces.length !== ARMOR_ORDER.length) {
+    const head = selected.head;
+    const chest = selected.chest;
+    const arms = selected.arms;
+    const waist = selected.waist;
+    const legs = selected.legs;
+    if (!head || !chest || !arms || !waist || !legs) {
       return;
     }
+    const armorPieces: ArmorPiece[] = [head, chest, arms, waist, legs];
 
-    const baseSkills: SkillPoints = {};
-    const slots: number[] = [];
+    const armorOnlySkills: SkillPoints = {};
+    const baseSlotCounts: SlotCountVector = [0, 0, 0, 0, 0];
+    let baseSlotCapacity = 0;
     const armorIds: Record<ArmorKind, number> = {
-      head: armorPieces[0].id,
-      chest: armorPieces[1].id,
-      arms: armorPieces[2].id,
-      waist: armorPieces[3].id,
-      legs: armorPieces[4].id,
+      head: head.id,
+      chest: chest.id,
+      arms: arms.id,
+      waist: waist.id,
+      legs: legs.id,
     };
     const resist = {
       fire: 0,
@@ -964,9 +1222,12 @@ export function optimizeBuilds(
     let defenseMax = 0;
 
     for (const piece of armorPieces) {
-      addSkillPoints(baseSkills, piece.skills);
+      addSkillPoints(armorOnlySkills, piece.skills);
       for (const slot of piece.slots) {
-        slots.push(slot);
+        if (slot >= 1 && slot <= 4) {
+          baseSlotCounts[slot] += 1;
+          baseSlotCapacity += slot;
+        }
       }
       defenseBase += piece.defenseBase;
       defenseMax += piece.defenseMax;
@@ -977,37 +1238,77 @@ export function optimizeBuilds(
       resist.dragon += piece.resist.dragon;
     }
 
-    const setBonusSkills = computeSetAndGroupBonusSkills(armorPieces, request.data.armorSetsById);
-    addSkillPoints(baseSkills, setBonusSkills);
-    const requestedBase = mapRequestedSkillLevels(requestedSkillIds, baseSkills);
-
-    for (const charm of prunedCharms) {
-      const totalsBeforeDecos = cloneSkillPoints(baseSkills);
-      addSkillPoints(totalsBeforeDecos, charm.skills);
-
-      const deficits = requestedSkillIds.map((skillId, index) => {
-        const total = requestedBase[index] + (charm.skills[skillId] ?? 0);
-        const deficit = targets[index] - total;
-        return deficit > 0 ? deficit : 0;
-      });
-
-      const allSlots = [...slots, ...charm.slots];
-      const slotCounts = slotCountsFromSlots(allSlots);
-      const placement = assignDecorations(
-        requestedSkillIds,
-        skillIndexById,
-        deficits,
-        slotCounts,
-        includeNearMissResults ? maxMissingPoints : 0,
-        decorationData,
-        decorationMemo,
+    const allowedMissing = includeNearMissResults ? maxMissingPoints : 0;
+    const baseSkillOptions = weaponSetBonusOptions.map((option) => {
+      const setBonusSkills = computeSetAndGroupBonusSkills(
+        armorPieces,
+        request.data.armorSetsById,
+        option.pieces,
       );
-      if (placement === null) {
-        continue;
+      const baseSkills = cloneSkillPoints(armorOnlySkills);
+      addSkillPoints(baseSkills, setBonusSkills);
+      return {
+        setId: option.setId,
+        baseSkills,
+        requestedBase: mapRequestedSkillLevels(requestedSkillIds, baseSkills),
+      };
+    });
+    const noWeaponBaseOption = baseSkillOptions.find((option) => option.setId === "") ?? null;
+
+    const evaluateCharmAgainstBase = (
+      baseSkillsForEval: SkillPoints,
+      requestedBaseForEval: number[],
+      charmData: CharmEvalData,
+      missingLimit: number,
+    ): {
+      placement: DecorationPlacement[];
+      totalsAfterDecos: SkillPoints;
+      missingRequestedPoints: number;
+      wastedRequestedPoints: number;
+      leftoverSlotCapacity: number;
+    } | null => {
+      const deficits = new Array<number>(requestedSkillIds.length);
+      let totalDeficit = 0;
+      for (let i = 0; i < requestedSkillIds.length; i += 1) {
+        const deficit = targets[i] - (requestedBaseForEval[i] + charmData.requestedLevels[i]);
+        const normalizedDeficit = deficit > 0 ? deficit : 0;
+        deficits[i] = normalizedDeficit;
+        totalDeficit += normalizedDeficit;
       }
 
-      const totalsAfterDecos = cloneSkillPoints(totalsBeforeDecos);
+      let placement: DecorationPlacement[] | null;
+      if (totalDeficit <= missingLimit) {
+        placement = [];
+      } else {
+        const combinedSlotCounts: SlotCountVector = [
+          0,
+          baseSlotCounts[1] + charmData.slotCounts[1],
+          baseSlotCounts[2] + charmData.slotCounts[2],
+          baseSlotCounts[3] + charmData.slotCounts[3],
+          baseSlotCounts[4] + charmData.slotCounts[4],
+        ];
+        placement = assignDecorations(
+          requestedSkillIds,
+          skillIndexById,
+          deficits,
+          combinedSlotCounts,
+          missingLimit,
+          decorationData,
+          decorationUpperBounds,
+          decorationTotalUpperBound,
+          decorationMemo,
+          decorationMemoLimit,
+        );
+        if (placement === null) {
+          return null;
+        }
+      }
+
+      const totalsAfterDecos = cloneSkillPoints(baseSkillsForEval);
+      addSkillPoints(totalsAfterDecos, charmData.charm.skills);
+      let usedSlotCapacity = 0;
       for (const item of placement) {
+        usedSlotCapacity += item.slotSizeUsed;
         const decoration = decorationData.byId[item.decorationId];
         if (!decoration) {
           continue;
@@ -1034,33 +1335,108 @@ export function optimizeBuilds(
       const nearMissAccepted =
         includeNearMissResults &&
         missingRequestedPoints > 0 &&
-        missingRequestedPoints <= maxMissingPoints;
+        missingRequestedPoints <= missingLimit;
       if (!allTargetsMet && !nearMissAccepted) {
-        continue;
+        return null;
       }
 
-      const totalSlotCapacity = allSlots.reduce((sum, value) => sum + value, 0);
-      const usedSlotCapacity = placement.reduce((sum, value) => sum + value.slotSizeUsed, 0);
+      const totalSlotCapacity = baseSlotCapacity + charmData.slotCapacity;
       const leftoverSlotCapacity = totalSlotCapacity - usedSlotCapacity;
 
-      const tieKey = buildTieKey(armorIds, charm.id, placement);
-      const result: BuildResult = {
-        armor: armorIds,
-        charmRankId: charm.id,
-        charmName: charm.name,
-        charmSlots: [...charm.slots],
-        placements: placement,
-        skillTotals: totalsAfterDecos,
-        defenseBase,
-        defenseMax,
-        resist,
-        leftoverSlotCapacity,
-        wastedRequestedPoints,
+      return {
+        placement,
+        totalsAfterDecos,
         missingRequestedPoints,
-        tieKey,
+        wastedRequestedPoints,
+        leftoverSlotCapacity,
       };
+    };
+
+    for (const charmData of charmEvalData) {
+      let effectiveMissingLimit = allowedMissing;
+      if (topResults.length >= request.maxResults && topResults.length > 0) {
+        const worstMissing = topResults[topResults.length - 1].missingRequestedPoints ?? 0;
+        if (worstMissing < effectiveMissingLimit) {
+          effectiveMissingLimit = worstMissing;
+        }
+      }
+
+      let bestCandidate:
+        | {
+            result: BuildResult;
+            optionSetId: string;
+          }
+        | null = null;
+
+      for (const option of baseSkillOptions) {
+        const evaluation = evaluateCharmAgainstBase(
+          option.baseSkills,
+          option.requestedBase,
+          charmData,
+          effectiveMissingLimit,
+        );
+        if (!evaluation) {
+          continue;
+        }
+
+        const tieKey = buildTieKey(armorIds, charmData.charm.id, evaluation.placement);
+        const candidate: BuildResult = {
+          armor: armorIds,
+          charmRankId: charmData.charm.id,
+          charmName: charmData.charm.name,
+          charmSlots: [...charmData.charm.slots],
+          placements: evaluation.placement,
+          skillTotals: evaluation.totalsAfterDecos,
+          defenseBase,
+          defenseMax,
+          resist,
+          leftoverSlotCapacity: evaluation.leftoverSlotCapacity,
+          wastedRequestedPoints: evaluation.wastedRequestedPoints,
+          missingRequestedPoints: evaluation.missingRequestedPoints,
+          tieKey,
+        };
+
+        if (!bestCandidate) {
+          bestCandidate = { result: candidate, optionSetId: option.setId };
+          continue;
+        }
+
+        const compare = compareBuildResults(candidate, bestCandidate.result);
+        if (
+          compare < 0 ||
+          (compare === 0 && option.setId === "" && bestCandidate.optionSetId !== "")
+        ) {
+          bestCandidate = { result: candidate, optionSetId: option.setId };
+        }
+      }
+
+      if (!bestCandidate) {
+        continue;
+      }
+      const result = bestCandidate.result;
 
       stats.feasibleBuilds += 1;
+      if (!wouldInsertResult(topResults, result, request.maxResults)) {
+        continue;
+      }
+      if (
+        hasWeaponSetBonusPieces &&
+        bestCandidate.optionSetId &&
+        noWeaponBaseOption
+      ) {
+        // Dependency badge should reflect strict target viability without weapon assist,
+        // independent of near-miss tolerance used for search expansion.
+        const noWeaponResult = evaluateCharmAgainstBase(
+          noWeaponBaseOption.baseSkills,
+          noWeaponBaseOption.requestedBase,
+          charmData,
+          0,
+        );
+        if (noWeaponResult === null) {
+          result.requiresWeaponSetBonusRoll = true;
+          result.requiredWeaponSetBonusSetId = bestCandidate.optionSetId;
+        }
+      }
       tryInsertResult(topResults, result, request.maxResults);
     }
 
@@ -1082,7 +1458,8 @@ export function optimizeBuilds(
     for (const piece of filteredByKind[kind]) {
       selected[kind] = piece;
       if (piece.armorSetId !== null) {
-        selectedSetCounts[piece.armorSetId] = (selectedSetCounts[piece.armorSetId] ?? 0) + 1;
+        const setId = String(piece.armorSetId);
+        selectedSetCounts[setId] = (selectedSetCounts[setId] ?? 0) + 1;
       }
       for (let i = 0; i < requestedSkillIds.length; i += 1) {
         currentRequested[i] += piece.skills[requestedSkillIds[i]] ?? 0;
@@ -1092,9 +1469,17 @@ export function optimizeBuilds(
         currentRequested[i] -= piece.skills[requestedSkillIds[i]] ?? 0;
       }
       if (piece.armorSetId !== null) {
-        selectedSetCounts[piece.armorSetId] -= 1;
-        if (selectedSetCounts[piece.armorSetId] <= 0) {
-          delete selectedSetCounts[piece.armorSetId];
+        const setId = String(piece.armorSetId);
+        const baseCount = baseSelectedSetCounts[setId] ?? 0;
+        const nextCount = (selectedSetCounts[setId] ?? 0) - 1;
+        if (nextCount <= baseCount) {
+          if (baseCount > 0) {
+            selectedSetCounts[setId] = baseCount;
+          } else {
+            delete selectedSetCounts[setId];
+          }
+        } else {
+          selectedSetCounts[setId] = nextCount;
         }
       }
     }

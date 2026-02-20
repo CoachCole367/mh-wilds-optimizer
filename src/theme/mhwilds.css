@@ -1,0 +1,557 @@
+:root.theme-mhwilds,
+body.theme-mhwilds {
+  --font-body: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-head: Cinzel, Georgia, "Times New Roman", serif;
+
+  --bg: #0f1311;
+  --vignette: rgba(0, 0, 0, 0.58);
+  --panel: #f4ecdb;
+  --panel2: #e6dbc2;
+  --panelEdge: rgba(255, 246, 230, 0.95);
+  --panelInner: rgba(255, 249, 236, 0.62);
+  --border: #78664a;
+  --border2: #9b8761;
+
+  --text: #201e1a;
+  --muted: #5b5448;
+
+  --green: #2f6b4f;
+  --ember: #c76d2a;
+  --steel: #5f6670;
+  --danger: #b33a2f;
+
+  --focusRing: rgba(199, 109, 42, 0.34);
+
+  --chipBg: #fbf5e8;
+  --chipBorder: #9b8765;
+
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadowStrong: 0 24px 56px rgba(0, 0, 0, 0.46);
+
+  --bg-0: var(--bg);
+  --bg-1: #171d18;
+  --bg-noise-a: rgba(199, 109, 42, 0.2);
+  --bg-noise-b: rgba(47, 107, 79, 0.18);
+
+  --panel-2: var(--panel2);
+  --surface-raised: rgba(255, 249, 236, 0.94);
+  --surface-pane: rgba(248, 239, 223, 0.94);
+  --surface-panel: rgba(244, 236, 218, 0.93);
+  --surface-soft: rgba(248, 241, 227, 0.9);
+  --surface-soft-strong: rgba(252, 246, 235, 0.96);
+  --surface-card: rgba(248, 241, 227, 0.95);
+  --surface-chip: rgba(252, 247, 237, 0.96);
+  --surface-suggestion: rgba(248, 240, 225, 0.92);
+
+  --line: var(--border);
+  --line-strong: var(--border2);
+  --ink: var(--text);
+  --ink-soft: var(--muted);
+
+  --accent: var(--green);
+  --accent-strong: #25543e;
+  --accent-contrast: #fff;
+  --accent-2: var(--ember);
+  --accent-wash: rgba(47, 107, 79, 0.15);
+
+  --good: #2e7d32;
+  --good-border: #2e7d32;
+  --good-bg: rgba(46, 125, 50, 0.12);
+  --warn: #b86b1f;
+  --warn-border: #b86b1f;
+  --warn-bg: rgba(184, 107, 31, 0.12);
+  --bad: var(--danger);
+  --bad-border: var(--danger);
+  --bad-bg: rgba(179, 58, 47, 0.12);
+  --error: var(--danger);
+
+  --input-bg: var(--chipBg);
+  --button-bg-1: #faf2e0;
+  --button-bg-2: #e8d9bd;
+  --chip-bg: var(--chipBg);
+  --chip-border: var(--chipBorder);
+
+  --focus: var(--focusRing);
+  --radius: 13px;
+}
+
+body.theme-mhwilds {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at center, transparent 52%, var(--vignette) 100%),
+    radial-gradient(circle at 12% 6%, rgba(199, 109, 42, 0.22) 0%, transparent 36%),
+    radial-gradient(circle at 84% 4%, rgba(47, 107, 79, 0.19) 0%, transparent 30%),
+    linear-gradient(160deg, var(--bg), #1a221c),
+    radial-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: auto, auto, auto, auto, 14px 14px;
+}
+
+body.theme-mhwilds #app {
+  position: relative;
+  border-radius: 18px;
+  box-shadow: var(--shadowStrong);
+}
+
+body.theme-mhwilds .hero,
+body.theme-mhwilds .panel,
+body.theme-mhwilds .pane,
+body.theme-mhwilds .result-card,
+body.theme-mhwilds .optional-block,
+body.theme-mhwilds .flex-suggestion-card {
+  position: relative;
+  border: 1px solid var(--border);
+  outline: 1px solid var(--border2);
+  outline-offset: -1px;
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+  box-shadow:
+    inset 0 1px 0 var(--panelEdge),
+    var(--shadow);
+  overflow: hidden;
+}
+
+body.theme-mhwilds .hero::before,
+body.theme-mhwilds .panel::before,
+body.theme-mhwilds .pane::before,
+body.theme-mhwilds .result-card::before,
+body.theme-mhwilds .optional-block::before,
+body.theme-mhwilds .flex-suggestion-card::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid var(--panelInner);
+  border-radius: calc(var(--radius) - 5px);
+  pointer-events: none;
+}
+
+body.theme-mhwilds .hero:hover,
+body.theme-mhwilds .panel:hover,
+body.theme-mhwilds .pane:hover,
+body.theme-mhwilds .result-card:hover {
+  box-shadow:
+    inset 0 1px 0 var(--panelEdge),
+    0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+body.theme-mhwilds .result-card {
+  border-left: 4px solid var(--green);
+}
+
+body.theme-mhwilds .quickstart-card,
+body.theme-mhwilds .quickstart-preset {
+  border: 1px solid var(--border2);
+  background: linear-gradient(180deg, rgba(251, 245, 233, 0.94), rgba(237, 225, 205, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+body.theme-mhwilds .quickstart-card {
+  border-left: 4px solid var(--ember);
+}
+
+body.theme-mhwilds .quickstart-title {
+  font-size: 0.94rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #564c3f;
+}
+
+body.theme-mhwilds .quickstart-collapsible > summary::before {
+  border-left-color: var(--ember);
+}
+
+body.theme-mhwilds .quickstart-name {
+  color: #4f473a;
+}
+
+body.theme-mhwilds .quickstart-group-title {
+  color: #5b503f;
+}
+
+body.theme-mhwilds .advanced-controls {
+  border: 1px solid var(--border2);
+  background: linear-gradient(180deg, rgba(249, 243, 232, 0.94), rgba(236, 224, 203, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+body.theme-mhwilds .advanced-controls > summary {
+  color: #564c3f;
+}
+
+body.theme-mhwilds .advanced-controls > summary::before {
+  border-left-color: var(--ember);
+}
+
+body.theme-mhwilds .panel-title-row,
+body.theme-mhwilds .result-header {
+  position: relative;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(120, 102, 74, 0.42);
+}
+
+body.theme-mhwilds .panel-title-row::after,
+body.theme-mhwilds .result-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 68px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--ember), transparent);
+}
+
+body.theme-mhwilds .section-title {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+body.theme-mhwilds .panel-title-row .section-title {
+  width: auto;
+}
+
+body.theme-mhwilds .result-heading {
+  width: 100%;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+body.theme-mhwilds .result-heading::after {
+  content: "";
+  flex: 1;
+  min-width: 24px;
+  height: 1px;
+  margin-left: 8px;
+  background: linear-gradient(90deg, rgba(120, 102, 74, 0.55), transparent);
+}
+
+body.theme-mhwilds .result-rank {
+  font-size: 1.08rem;
+  font-family: var(--font-head);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+body.theme-mhwilds .icon {
+  background-color: currentColor;
+  opacity: 0.92;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+body.theme-mhwilds .section-title .icon,
+body.theme-mhwilds .result-heading .icon,
+body.theme-mhwilds .result-rank .icon {
+  color: var(--ember);
+}
+
+body.theme-mhwilds .icon-data {
+  -webkit-mask-image: url("/assets/icons/data.svg");
+  mask-image: url("/assets/icons/data.svg");
+}
+
+body.theme-mhwilds .icon-skills {
+  -webkit-mask-image: url("/assets/icons/skills.svg");
+  mask-image: url("/assets/icons/skills.svg");
+}
+
+body.theme-mhwilds .icon-decorations {
+  -webkit-mask-image: url("/assets/icons/decorations.svg");
+  mask-image: url("/assets/icons/decorations.svg");
+}
+
+body.theme-mhwilds .icon-controls {
+  -webkit-mask-image: url("/assets/icons/controls.svg");
+  mask-image: url("/assets/icons/controls.svg");
+}
+
+body.theme-mhwilds .icon-results {
+  -webkit-mask-image: url("/assets/icons/results.svg");
+  mask-image: url("/assets/icons/results.svg");
+}
+
+body.theme-mhwilds .icon-charm {
+  -webkit-mask-image: url("/assets/icons/charm.svg");
+  mask-image: url("/assets/icons/charm.svg");
+}
+
+body.theme-mhwilds input,
+body.theme-mhwilds select,
+body.theme-mhwilds textarea {
+  background: var(--chipBg);
+  border-color: var(--chipBorder);
+  min-height: 40px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+body.theme-mhwilds textarea {
+  min-height: 110px;
+}
+
+body.theme-mhwilds select:not([multiple]):not([size]) {
+  appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%236a5338' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5.5 7.5 4.5 5 4.5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.62rem center;
+  background-size: 0.82rem;
+}
+
+body.theme-mhwilds input:focus,
+body.theme-mhwilds select:focus,
+body.theme-mhwilds textarea:focus,
+body.theme-mhwilds input:focus-visible,
+body.theme-mhwilds select:focus-visible,
+body.theme-mhwilds textarea:focus-visible {
+  outline: none;
+  border-color: var(--ember);
+  box-shadow:
+    0 0 0 3px var(--focusRing),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+body.theme-mhwilds button {
+  border-color: rgba(95, 102, 112, 0.76);
+  background: linear-gradient(180deg, #f9f2e3, #e6d6b8);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.73),
+    0 1px 0 rgba(92, 74, 43, 0.25);
+}
+
+body.theme-mhwilds button:hover:not(:disabled) {
+  filter: brightness(1.03);
+  border-color: var(--ember);
+}
+
+body.theme-mhwilds button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.18);
+}
+
+body.theme-mhwilds .btn-primary {
+  border-color: #224737;
+  background: linear-gradient(180deg, #3a7b5c, var(--green));
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.23),
+    0 2px 0 rgba(20, 43, 33, 0.34);
+}
+
+body.theme-mhwilds .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+body.theme-mhwilds .score-pill,
+body.theme-mhwilds .def-pill,
+body.theme-mhwilds .missing-pill,
+body.theme-mhwilds .weapon-roll-pill,
+body.theme-mhwilds .dependence-badge {
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  background: linear-gradient(180deg, rgba(255, 251, 242, 0.95), rgba(232, 223, 203, 0.95));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+body.theme-mhwilds .score-pill {
+  color: #554f45;
+}
+
+body.theme-mhwilds .def-pill {
+  border-color: var(--green);
+  background: linear-gradient(180deg, rgba(220, 240, 228, 0.9), rgba(202, 230, 213, 0.92));
+  color: #24503a;
+}
+
+body.theme-mhwilds .missing-pill {
+  border-color: var(--warn-border);
+  background: linear-gradient(180deg, rgba(250, 237, 219, 0.9), rgba(239, 218, 186, 0.92));
+  color: #81541e;
+}
+
+body.theme-mhwilds .weapon-roll-pill {
+  border-color: var(--ember);
+  background: linear-gradient(180deg, rgba(251, 236, 220, 0.93), rgba(241, 215, 185, 0.92));
+  color: #7e4819;
+}
+
+body.theme-mhwilds .dependence-badge.none {
+  color: #655f54;
+}
+
+body.theme-mhwilds .dependence-badge.low {
+  border-color: var(--good-border);
+  color: #27642b;
+  background: linear-gradient(180deg, rgba(225, 245, 226, 0.92), rgba(205, 235, 209, 0.9));
+}
+
+body.theme-mhwilds .dependence-badge.med {
+  border-color: var(--warn-border);
+  color: #87511c;
+  background: linear-gradient(180deg, rgba(252, 239, 219, 0.93), rgba(241, 220, 187, 0.92));
+}
+
+body.theme-mhwilds .dependence-badge.high {
+  border-color: var(--danger);
+  color: #89281f;
+  background: linear-gradient(180deg, rgba(252, 231, 228, 0.94), rgba(242, 206, 199, 0.92));
+}
+
+body.theme-mhwilds .slot-pill,
+body.theme-mhwilds .skill-chip,
+body.theme-mhwilds .hunt-status-pill,
+body.theme-mhwilds .target-inline {
+  border-color: var(--chipBorder);
+  background: linear-gradient(180deg, #fff8ea, var(--chipBg));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+body.theme-mhwilds .slot-pill {
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+}
+
+body.theme-mhwilds .slot-pill::before {
+  content: "";
+  width: 0.78em;
+  height: 0.78em;
+  flex-shrink: 0;
+  background: currentColor;
+  opacity: 0.74;
+  -webkit-mask-image: url("/assets/icons/decorations.svg");
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-image: url("/assets/icons/decorations.svg");
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+body.theme-mhwilds .slot-tier {
+  color: var(--steel);
+  background: rgba(242, 236, 224, 0.95);
+}
+
+body.theme-mhwilds .slot-pill.s1,
+body.theme-mhwilds .slot-pill.s1 .slot-tier {
+  color: var(--steel);
+  border-color: rgba(95, 102, 112, 0.85);
+}
+
+body.theme-mhwilds .slot-pill.s2,
+body.theme-mhwilds .slot-pill.s2 .slot-tier {
+  color: var(--green);
+  border-color: rgba(47, 107, 79, 0.9);
+}
+
+body.theme-mhwilds .slot-pill.s3,
+body.theme-mhwilds .slot-pill.s3 .slot-tier {
+  color: var(--ember);
+  border-color: rgba(199, 109, 42, 0.92);
+}
+
+body.theme-mhwilds .slot-pill.no-slot::before {
+  display: none;
+}
+
+body.theme-mhwilds .resist-row {
+  gap: 8px;
+}
+
+body.theme-mhwilds .resist-value {
+  gap: 3px;
+}
+
+body.theme-mhwilds .resist-value::before {
+  content: "";
+  width: 0.76em;
+  height: 0.76em;
+  background: currentColor;
+  opacity: 0.9;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+body.theme-mhwilds .resist-fire {
+  color: #a74a28;
+}
+
+body.theme-mhwilds .resist-fire::before {
+  -webkit-mask-image: url("/assets/icons/fire.svg");
+  mask-image: url("/assets/icons/fire.svg");
+}
+
+body.theme-mhwilds .resist-water {
+  color: #2f6487;
+}
+
+body.theme-mhwilds .resist-water::before {
+  -webkit-mask-image: url("/assets/icons/water.svg");
+  mask-image: url("/assets/icons/water.svg");
+}
+
+body.theme-mhwilds .resist-ice {
+  color: #3a7480;
+}
+
+body.theme-mhwilds .resist-ice::before {
+  -webkit-mask-image: url("/assets/icons/ice.svg");
+  mask-image: url("/assets/icons/ice.svg");
+}
+
+body.theme-mhwilds .resist-thunder {
+  color: #8a6318;
+}
+
+body.theme-mhwilds .resist-thunder::before {
+  -webkit-mask-image: url("/assets/icons/thunder.svg");
+  mask-image: url("/assets/icons/thunder.svg");
+}
+
+body.theme-mhwilds .resist-dragon {
+  color: #5c4c7b;
+}
+
+body.theme-mhwilds .resist-dragon::before {
+  -webkit-mask-image: url("/assets/icons/dragon.svg");
+  mask-image: url("/assets/icons/dragon.svg");
+}
+
+body.theme-mhwilds .target-row,
+body.theme-mhwilds .gear-accordion,
+body.theme-mhwilds .hunt-status-box {
+  border-color: var(--border2);
+}
+
+body.theme-mhwilds .flex-suggestion-lazy {
+  border-color: var(--border2);
+  background: linear-gradient(180deg, rgba(250, 245, 235, 0.92), rgba(239, 230, 212, 0.9));
+}
+
+body.theme-mhwilds .flex-suggestion-lazy-summary {
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  body.theme-mhwilds #app {
+    border-radius: 14px;
+  }
+
+  body.theme-mhwilds .section-title {
+    font-size: 0.84rem;
+  }
+}

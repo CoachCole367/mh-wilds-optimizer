@@ -1,12 +1,14 @@
 import "./style.css";
 import { clearCachedLocale, loadOptimizerData } from "./mhdbApi";
 import { compareBuildResults } from "./optimizer";
+import { escapeAttr, escapeText, safeJoin } from "./html";
 import {
   DEFAULT_CHARM_SLOT_PATTERNS,
   DEFAULT_CHARM_SUGGESTION_OPTIONS,
   buildDefaultSkillWeights,
   suggestCharmsForBuild,
 } from "./charmSuggestions";
+import { decodeShareStateV2, encodeShareStateV2 } from "./shareState";
 import {
   HUNT_ELEMENT_OPTIONS,
   HUNT_STATUS_OPTIONS,
@@ -17,6 +19,10 @@ import {
   type HuntStatus,
   type LeftoverSlot,
 } from "./flexSuggestions";
+import {
+  AUTO_WEAPON_SET_BONUS_SET_ID,
+  resolveWeaponSetBonusPiecesForRequest,
+} from "./weaponSetBonus";
 import type {
   ArmorPiece,
   BuildResult,
@@ -44,6 +50,7 @@ const DEFAULT_THREADS = Math.max(1, Math.min(MAX_THREADS, Math.round(AVAILABLE_T
 const DEFAULT_RESULTS = 25;
 const DEFAULT_NEAR_MISS_MAX_MISSING_POINTS = 2;
 const OWNED_CHARMS_STORAGE_KEY = "mh-wilds-optimizer:owned-charms:v1";
+const PROGRESS_RENDER_INTERVAL_MS = 90;
 
 type SkillKindFilter = "all" | "armor" | "set" | "group";
 
@@ -111,7 +118,7 @@ root.innerHTML = `
   </header>
 
   <section class="panel">
-    <div class="panel-title-row"><h2>Data</h2><button id="refresh-data" type="button">Refresh Data</button></div>
+    <div class="panel-title-row"><h2 class="section-title section-title-data"><span class="icon icon-data" aria-hidden="true"></span><span>Data</span></h2><button id="refresh-data" type="button">Refresh Data</button></div>
     <div class="inline-grid">
       <label class="field"><span>Locale</span><select id="locale"></select></label>
       <p id="data-status" class="status-line"></p>
@@ -120,7 +127,7 @@ root.innerHTML = `
 
   <section class="panel split">
     <div class="pane">
-      <h2>Desired Skills</h2>
+      <h2 class="section-title section-title-skills"><span class="icon icon-skills" aria-hidden="true"></span><span>Desired Skills</span></h2>
       <div class="inline-grid">
         <label class="field"><span>Search</span><input id="skill-search" type="search" placeholder="Skill name"/></label>
         <label class="field"><span>Type</span>
@@ -138,7 +145,7 @@ root.innerHTML = `
       <div id="desired-list"></div>
     </div>
     <div class="pane">
-      <h2>Decoration Pool</h2>
+      <h2 class="section-title section-title-deco"><span class="icon icon-decorations" aria-hidden="true"></span><span>Decoration Pool</span></h2>
       <label class="field"><span>Search</span><input id="deco-search" type="search" placeholder="Decoration name"/></label>
       <div class="button-row"><button id="deco-all" type="button">Select All</button><button id="deco-none" type="button">Clear All</button></div>
       <select id="deco-list" multiple size="10"></select>
@@ -147,7 +154,73 @@ root.innerHTML = `
   </section>
 
   <section class="panel">
-    <h2 title="Core optimizer settings. Use optional sections below for advanced tuning.">Controls</h2>
+    <h2 class="section-title section-title-controls" title="Core optimizer settings. Use optional sections below for advanced tuning."><span class="icon icon-controls" aria-hidden="true"></span><span>Controls</span></h2>
+    <details class="quickstart-card quickstart-collapsible" aria-label="Preset settings">
+      <summary class="quickstart-title" title="Show one-click beginner and advanced presets."><span class="icon icon-controls" aria-hidden="true"></span><span>Preset Profiles</span></summary>
+      <div class="quickstart-body">
+        <p class="muted">Pick a preset path. Beginner profiles are low-noise defaults; advanced profiles open deeper solver behavior.</p>
+        <div class="quickstart-groups">
+          <section class="quickstart-group">
+            <p class="quickstart-group-title">Beginner Presets</p>
+            <div class="quickstart-grid">
+              <article class="quickstart-preset">
+                <p class="quickstart-name">Starter Realistic</p>
+                <p class="muted">Craftable baseline with no theoretical charm completion.</p>
+                <ul class="quickstart-list">
+                  <li>Charm Mode: Off</li>
+                  <li>Near-Miss Solver: Off</li>
+                  <li>Allow alpha/gamma armor: On</li>
+                  <li>Decoration Pool: All</li>
+                </ul>
+                <button id="apply-beginner-realistic" type="button">Apply Starter Realistic</button>
+              </article>
+              <article class="quickstart-preset">
+                <p class="quickstart-name">Starter With Guidance</p>
+                <p class="muted">Guided theorycraft with near-miss + suggestion filters enabled.</p>
+                <ul class="quickstart-list">
+                  <li>Charm Mode: Suggest After</li>
+                  <li>Near-Miss Solver: On (2 max missing)</li>
+                  <li>Show base + with-best-charm: On</li>
+                  <li>Hide HIGH charm dependence: On</li>
+                </ul>
+                <button id="apply-beginner-guidance" type="button">Apply Starter With Guidance</button>
+              </article>
+            </div>
+          </section>
+          <section class="quickstart-group">
+            <p class="quickstart-group-title">Advanced Presets</p>
+            <div class="quickstart-grid">
+              <article class="quickstart-preset">
+                <p class="quickstart-name">RNG Theorycraft</p>
+                <p class="muted">Wider search for high-ceiling theoretical sets and completion paths.</p>
+                <ul class="quickstart-list">
+                  <li>Charm Mode: Suggest After</li>
+                  <li>Near-Miss Solver: On (5 max missing)</li>
+                  <li>Show base + with-best-charm: On</li>
+                  <li>Hide HIGH charm dependence: Off</li>
+                </ul>
+                <button id="apply-advanced-theorycraft" type="button">Apply RNG Theorycraft</button>
+              </article>
+              <article class="quickstart-preset">
+                <p class="quickstart-name">Owned Validation</p>
+                <p class="muted">Realistic validation against your imported charm library.</p>
+                <ul class="quickstart-list">
+                  <li>Charm Mode: Owned</li>
+                  <li>Near-Miss Solver: On (3 max missing)</li>
+                  <li>Show base + with-best-charm: On</li>
+                  <li>Owned charms required for best value</li>
+                </ul>
+                <button id="apply-advanced-owned" type="button">Apply Owned Validation</button>
+              </article>
+            </div>
+          </section>
+        </div>
+      </div>
+    </details>
+    <details class="advanced-controls">
+      <summary title="Show all optimizer settings and optional tuning panels.">Advanced Settings</summary>
+      <p class="muted advanced-summary">Expand for full control over solver, charm filters, owned charms, and flex tuning.</p>
+      <div class="advanced-controls-body">
     <div class="controls-main">
       <label class="checkbox-line" title="Include alpha armor pieces in the search pool."><input id="allow-alpha" type="checkbox"/><span>Allow &alpha; armor</span></label>
       <label class="checkbox-line" title="Include gamma armor pieces in the search pool."><input id="allow-gamma" type="checkbox"/><span>Allow &gamma; armor</span></label>
@@ -231,8 +304,10 @@ root.innerHTML = `
         </div>
       </details>
     </div>
+      </div>
+    </details>
     <div class="button-row">
-      <button id="optimize" type="button" title="Start a new optimization run with current filters and settings.">Optimize</button>
+      <button id="optimize" class="btn-primary" type="button" title="Start a new optimization run with current filters and settings."><span class="icon icon-controls" aria-hidden="true"></span><span>Optimize</span></button>
       <button id="stop" type="button" title="Stop all currently running worker searches.">Stop</button>
       <button id="copy-link" type="button" title="Copy a URL containing your current settings and selected skills.">Copy Share Link</button>
     </div>
@@ -243,7 +318,7 @@ root.innerHTML = `
     <p id="run-status" class="status-line"></p>
   </section>
 
-  <section class="panel"><h2>Results</h2><div id="results"></div></section>
+  <section class="panel"><h2 class="section-title section-title-results"><span class="icon icon-results" aria-hidden="true"></span><span>Results</span></h2><div id="results"></div></section>
   <footer class="footer-note">Not affiliated with Capcom. <a href="/about/index.html">About</a> | <a href="/faq/index.html">FAQ</a> | <a href="/charm-builder/index.html">Owned Charm Builder</a></footer>
 </div>`;
 
@@ -261,6 +336,10 @@ const el = {
   decoNone: document.querySelector<HTMLButtonElement>("#deco-none")!,
   decoList: document.querySelector<HTMLSelectElement>("#deco-list")!,
   decoSummary: document.querySelector<HTMLParagraphElement>("#deco-summary")!,
+  applyBeginnerRealistic: document.querySelector<HTMLButtonElement>("#apply-beginner-realistic")!,
+  applyBeginnerGuidance: document.querySelector<HTMLButtonElement>("#apply-beginner-guidance")!,
+  applyAdvancedTheorycraft: document.querySelector<HTMLButtonElement>("#apply-advanced-theorycraft")!,
+  applyAdvancedOwned: document.querySelector<HTMLButtonElement>("#apply-advanced-owned")!,
   allowAlpha: document.querySelector<HTMLInputElement>("#allow-alpha")!,
   allowGamma: document.querySelector<HTMLInputElement>("#allow-gamma")!,
   threads: document.querySelector<HTMLInputElement>("#threads")!,
@@ -305,24 +384,33 @@ for (const locale of LOCALES) {
 }
 
 const params = new URLSearchParams(window.location.search);
-const decoParam = params.get("decos");
-const flexPresetParam = params.get("fp");
-const charmModeParam = params.get("cm");
-const charmSuggestCountParam = params.get("sc");
-const charmMaxSkillsParam = params.get("mss");
-const charmSkillCapParam = params.get("msl");
-const charmSlotPatternsParam = params.get("sp");
-const nearMissEnabledParam = params.get("nm");
-const nearMissMaxMissingParam = params.get("nmm");
-const minCharmScoreParam = params.get("mcs");
-const hideNoDeficitParam = params.get("hnd");
-const showComfortParam = params.get("scn");
-const filterMeetsBaseParam = params.get("fb");
-const filterMeetsWithCharmParam = params.get("fw");
-const filterHideHighDependenceParam = params.get("fh");
-const skillKindFilterParam = params.get("sk");
-const huntElementParam = params.get("he");
-const huntStatusParam = params.get("hs");
+const hashState = decodeShareStateV2(window.location.hash);
+
+function getStateParam(name: string): string | null {
+  if (hashState && Object.prototype.hasOwnProperty.call(hashState, name)) {
+    return hashState[name];
+  }
+  return params.get(name);
+}
+
+const decoParam = getStateParam("decos");
+const flexPresetParam = getStateParam("fp");
+const charmModeParam = getStateParam("cm");
+const charmSuggestCountParam = getStateParam("sc");
+const charmMaxSkillsParam = getStateParam("mss");
+const charmSkillCapParam = getStateParam("msl");
+const charmSlotPatternsParam = getStateParam("sp");
+const nearMissEnabledParam = getStateParam("nm");
+const nearMissMaxMissingParam = getStateParam("nmm");
+const minCharmScoreParam = getStateParam("mcs");
+const hideNoDeficitParam = getStateParam("hnd");
+const showComfortParam = getStateParam("scn");
+const filterMeetsBaseParam = getStateParam("fb");
+const filterMeetsWithCharmParam = getStateParam("fw");
+const filterHideHighDependenceParam = getStateParam("fh");
+const skillKindFilterParam = getStateParam("sk");
+const huntElementParam = getStateParam("he");
+const huntStatusParam = getStateParam("hs");
 const validFlexPresetModes: FlexPresetMode[] = ["auto", "comfort", "balanced", "damage"];
 const validCharmModes: CharmMode[] = ["off", "suggest", "owned"];
 const validSkillKindFilters: SkillKindFilter[] = ["all", "armor", "set", "group"];
@@ -387,19 +475,25 @@ const parsedFilterShowMeetsWithBestCharm = parseBool(
   defaultCharmFilters.showMeetsWithBestCharm,
 );
 const parsedFilterHideHighDependence = parseBool(filterHideHighDependenceParam, false);
+const localeParam = getStateParam("loc");
+const desiredParam = getStateParam("ds");
+const allowAlphaParam = getStateParam("aa");
+const allowGammaParam = getStateParam("ag");
+const threadsParam = getStateParam("t");
+const resultsPerThreadParam = getStateParam("r");
 const state: State = {
-  locale: LOCALES.includes(params.get("loc") || "") ? (params.get("loc") as string) : "en",
+  locale: LOCALES.includes(localeParam || "") ? (localeParam as string) : "en",
   data: null,
   dataSource: null,
   loading: false,
   dataError: "",
-  desired: parseDesired(params.get("ds")),
-  allowAlpha: parseBool(params.get("aa"), true),
-  allowGamma: parseBool(params.get("ag"), true),
+  desired: parseDesired(desiredParam),
+  allowAlpha: parseBool(allowAlphaParam, true),
+  allowGamma: parseBool(allowGammaParam, true),
   useAllDecos: !decoParam || decoParam === "all",
   selectedDecos: decoParam && decoParam !== "all" ? parseIdSet(decoParam) : new Set<number>(),
-  threads: clampInt(params.get("t"), DEFAULT_THREADS, 1, MAX_THREADS),
-  resultsPerThread: clampInt(params.get("r"), DEFAULT_RESULTS, 1, MAX_RESULTS),
+  threads: clampInt(threadsParam, DEFAULT_THREADS, 1, MAX_THREADS),
+  resultsPerThread: clampInt(resultsPerThreadParam, DEFAULT_RESULTS, 1, MAX_RESULTS),
   optimizing: false,
   runStatus: "",
   rawResults: [],
@@ -614,9 +708,8 @@ function parseIdSet(raw: string): Set<number> {
   return output;
 }
 
-function esc(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-}
+const escText = escapeText;
+const escAttr = escapeAttr;
 
 function armorAllowed(piece: ArmorPiece): boolean {
   if (piece.isAlpha && !state.allowAlpha) return false;
@@ -654,6 +747,42 @@ function skillKindLabel(kind: string | undefined): string {
   if (normalized === "group") return "Group";
   if (normalized === "armor") return "Armor";
   return "Other";
+}
+
+function skillTooltip(skillId: number, levelHint?: number): string {
+  if (!state.data) {
+    return "";
+  }
+  const skill = state.data.skillsById[skillId];
+  if (!skill) {
+    return "";
+  }
+  const lines: string[] = [skill.name];
+  const rankEntries = Object.entries(skill.rankDescriptions ?? {})
+    .map(([rawLevel, text]) => ({ level: Number(rawLevel), text }))
+    .filter((entry) => Number.isFinite(entry.level) && entry.level > 0 && entry.text.length > 0)
+    .sort((a, b) => a.level - b.level);
+  if (skill.description) {
+    lines.push(skill.description);
+  }
+  let addedRankLine = false;
+  if (typeof levelHint === "number" && levelHint > 0) {
+    const clampedLevel = Math.max(1, Math.min(skill.maxLevel, levelHint));
+    const rankText = skill.rankDescriptions?.[clampedLevel] ?? "";
+    if (rankText) {
+      lines.push(`Lv ${clampedLevel}: ${rankText}`);
+      addedRankLine = true;
+    }
+  }
+  if (!addedRankLine && rankEntries.length > 0) {
+    for (const entry of rankEntries.slice(0, 2)) {
+      lines.push(`Lv ${entry.level}: ${entry.text}`);
+    }
+  }
+  if (lines.length === 1) {
+    lines.push(`Max level: ${skill.maxLevel}`);
+  }
+  return lines.join("\n");
 }
 
 function isCharmRollableSkillId(skillId: number): boolean {
@@ -778,6 +907,9 @@ type AggregatedProgress = {
   feasibleBuilds: number;
 };
 
+let progressRenderTimer: number | null = null;
+let lastProgressRenderedAt = 0;
+
 function aggregateProgress(): AggregatedProgress {
   const progressEntries = Object.values(state.workerProgressByIndex);
   let completedArmorCombos = 0;
@@ -825,6 +957,32 @@ function renderProgress(): void {
   } else {
     el.progressText.textContent = "No active run.";
   }
+}
+
+function flushProgressRender(): void {
+  if (progressRenderTimer !== null) {
+    window.clearTimeout(progressRenderTimer);
+    progressRenderTimer = null;
+  }
+  lastProgressRenderedAt = performance.now();
+  renderProgress();
+  el.runStatus.textContent = state.runStatus;
+}
+
+function scheduleProgressRender(): void {
+  const now = performance.now();
+  const elapsed = now - lastProgressRenderedAt;
+  if (elapsed >= PROGRESS_RENDER_INTERVAL_MS) {
+    flushProgressRender();
+    return;
+  }
+  if (progressRenderTimer !== null) {
+    return;
+  }
+  progressRenderTimer = window.setTimeout(() => {
+    progressRenderTimer = null;
+    flushProgressRender();
+  }, PROGRESS_RENDER_INTERVAL_MS - elapsed);
 }
 
 function rerender(): void {
@@ -875,6 +1033,11 @@ function rerender(): void {
   for (const input of huntStatusInputs) {
     input.checked = state.huntStatuses.has(input.dataset.huntStatus as HuntStatus);
   }
+  const controlsDisabled = state.loading || state.optimizing;
+  el.applyBeginnerRealistic.disabled = controlsDisabled;
+  el.applyBeginnerGuidance.disabled = controlsDisabled;
+  el.applyAdvancedTheorycraft.disabled = controlsDisabled;
+  el.applyAdvancedOwned.disabled = controlsDisabled;
   renderDataStatus();
   renderSkillList();
   renderDesired();
@@ -913,9 +1076,9 @@ function renderSkillList(): void {
     .filter((skill) => matchesSkillKindFilter(skill.kind, state.skillKindFilter))
     .filter((skill) => skill.name.toLowerCase().includes(q))
     .slice(0, 120);
-  el.skillList.innerHTML = list
-    .map((skill) => `<option value="${skill.id}">[${esc(skillKindLabel(skill.kind))}] ${esc(skill.name)} (max ${skill.maxLevel})</option>`)
-    .join("");
+  el.skillList.innerHTML = safeJoin(
+    list.map((skill) => `<option value="${skill.id}" title="${escAttr(skillTooltip(skill.id))}">[${escText(skillKindLabel(skill.kind))}] ${escText(skill.name)} (max ${skill.maxLevel})</option>`),
+  );
 }
 
 function renderDesired(): void {
@@ -932,6 +1095,7 @@ function renderDesired(): void {
       .map((d) => {
         const skill = state.data!.skillsById[d.skillId];
         if (!skill) return "";
+        const tooltip = escAttr(skillTooltip(d.skillId, d.level));
         const levelButtonCount = Math.max(5, skill.maxLevel);
         const levelButtons = Array.from({ length: levelButtonCount }, (_, index) => {
           const level = index + 1;
@@ -941,7 +1105,7 @@ function renderDesired(): void {
           if (active) classNames.push("active");
           return `<button type="button" class="${classNames.join(" ")}" data-skill-id="${d.skillId}" data-level="${level}" ${selectable ? "" : "disabled"}>${level}</button>`;
         }).join("");
-        return `<tr><td><div class="desired-skill-cell"><span>${esc(skill.name)}</span><span class="skill-kind-chip">${esc(skillKindLabel(skill.kind))}</span></div></td><td><div class="level-picker">${levelButtons}</div></td><td><button class="remove" data-skill-id="${d.skillId}" type="button">Remove</button></td></tr>`;
+        return `<tr><td><div class="desired-skill-cell"><span title="${tooltip}">${escText(skill.name)}</span><span class="skill-kind-chip">${escText(skillKindLabel(skill.kind))}</span></div></td><td><div class="level-picker">${levelButtons}</div></td><td><button class="remove" data-skill-id="${d.skillId}" type="button">Remove</button></td></tr>`;
       })
       .join("")
   }</tbody></table>`;
@@ -951,9 +1115,9 @@ function renderDecoList(): void {
   if (!state.data) return;
   const q = state.decoSearch.toLowerCase();
   const list = state.data.decorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
-  el.decoList.innerHTML = list
-    .map((d) => `<option value="${d.id}"${state.selectedDecos.has(d.id) ? " selected" : ""}>${esc(decoLabel[d.id] || d.name)}</option>`)
-    .join("");
+  el.decoList.innerHTML = safeJoin(
+    list.map((d) => `<option value="${d.id}"${state.selectedDecos.has(d.id) ? " selected" : ""}>${escText(decoLabel[d.id] || d.name)}</option>`),
+  );
   const selectedDecorationCount = state.data.decorations.reduce(
     (count, decoration) => count + (state.selectedDecos.has(decoration.id) ? 1 : 0),
     0,
@@ -971,7 +1135,7 @@ function skillChips(points: SkillPoints): string {
     .map((x) => {
       const name = state.data!.skillsById[x.id]?.name || `Skill #${x.id}`;
       const cls = requested.has(x.id) ? "skill-chip requested" : "skill-chip";
-      return `<span class="${cls}">${esc(name)} +${x.level}</span>`;
+      return `<span class="${cls}" title="${escAttr(skillTooltip(x.id, x.level))}">${escText(name)} +${x.level}</span>`;
     })
     .join("");
 }
@@ -986,7 +1150,7 @@ function requestedSkillChecklist(points: SkillPoints): string {
       const name = state.data!.skillsById[desired.skillId]?.name || `Skill #${desired.skillId}`;
       const total = points[desired.skillId] ?? 0;
       const met = total >= desired.level;
-      return `<div class="target-row ${met ? "met" : "missing"}"><span class="target-name">${esc(name)}</span><span class="target-value">${total}/${desired.level}</span><span class="target-flag">${met ? "Met" : "Missing"}</span></div>`;
+      return `<div class="target-row ${met ? "met" : "missing"}"><span class="target-name" title="${escAttr(skillTooltip(desired.skillId, desired.level))}">${escText(name)}</span><span class="target-value">${total}/${desired.level}</span><span class="target-flag">${met ? "Met" : "Missing"}</span></div>`;
     })
     .join("");
 
@@ -1118,19 +1282,20 @@ function renderGearWithDecorations(result: BuildResult): string {
         plan.slots.length > 0
           ? plan.slots
               .map((slot) => {
+                const tierClass = `s${slot.slotSize}`;
                 if (slot.decoName === null) {
-                  return `<li><span class="slot-pill empty">S${slot.slotSize} Empty</span></li>`;
+                  return `<li><span class="slot-pill empty ${tierClass}"><span class="slot-tier">S${slot.slotSize}</span><span>Empty</span></span></li>`;
                 }
-                return `<li><span class="slot-pill filled">S${slot.slotSize} ${esc(slot.decoName)}</span></li>`;
+                return `<li><span class="slot-pill filled ${tierClass}"><span class="slot-tier">S${slot.slotSize}</span><span>${escText(slot.decoName)}</span></span></li>`;
               })
               .join("")
-          : `<li><span class="slot-pill empty">No slots</span></li>`;
+          : `<li><span class="slot-pill empty no-slot"><span>No slots</span></span></li>`;
 
       return `
 <details class="gear-accordion" open>
   <summary class="gear-row gear-row-summary">
     <span class="gear-row-left"><span class="gear-arrow" aria-hidden="true"></span>${plan.label}</span>
-    <strong>${esc(plan.name)}</strong>
+    <strong>${escText(plan.name)}</strong>
   </summary>
   <div class="gear-slots">
     <ul class="gear-slot-list">${slotRows}</ul>
@@ -1210,13 +1375,13 @@ function renderFlexSuggestions(result: BuildResult): string {
       const loadoutRows = suggestion.decorationLoadout
         .map(
           (entry) =>
-            `<li>Slot ${entry.slotIndex} (${entry.pieceLabel} S${entry.slotLevel}) -> ${esc(entry.decorationName)}</li>`,
+            `<li>Slot ${entry.slotIndex} (${entry.pieceLabel} S${entry.slotLevel}) -> ${escText(entry.decorationName)}</li>`,
         )
         .join("");
       return `<article class="flex-suggestion-card">
         <div class="flex-suggestion-header"><strong>Option ${index + 1}</strong><span>Score ${suggestion.score.toFixed(1)}</span></div>
         <ul class="flex-loadout-list">${loadoutRows}</ul>
-        <p class="muted">${esc(suggestion.explanation)}</p>
+        <p class="muted">${escText(suggestion.explanation)}</p>
       </article>`;
     })
     .join("")}</div>`;
@@ -1660,7 +1825,7 @@ function renderCharmSuggestionSkillList(suggestion: CharmSuggestion): string {
   return entries
     .map((entry) => {
       const name = state.data!.skillsById[entry.skillId]?.name ?? `Skill #${entry.skillId}`;
-      return `<span class="skill-chip">${esc(name)} +${entry.level}</span>`;
+      return `<span class="skill-chip" title="${escAttr(skillTooltip(entry.skillId, entry.level))}">${escText(name)} +${entry.level}</span>`;
     })
     .join("");
 }
@@ -1716,33 +1881,42 @@ function renderCharmRequirement(
   const meetsLabel = displayStats.meetsTargets ? "Meets targets" : "Missing targets";
   const bestPreviewing = previewCharm?.id === best.charm.id;
   const previewNotice = previewCharm
-    ? `<p class="muted preview-line">Previewing charm: ${esc(buildCharmSummaryFromCharm(previewCharm))} <button type="button" class="tiny-btn" data-charm-action="clear-preview" data-result-key="${esc(result.tieKey)}">Clear preview</button></p>`
+    ? `<p class="muted preview-line">Previewing charm: ${escText(buildCharmSummaryFromCharm(previewCharm))} <button type="button" class="tiny-btn" data-charm-action="clear-preview" data-result-key="${escAttr(result.tieKey)}">Clear preview</button></p>`
     : "";
 
   const summaryTitle = isOwnedMode ? "Best owned charm:" : "Charm requirement (theoretical):";
-  const summaryLine = `<p class="charm-summary-line"><strong>${summaryTitle}</strong> ${esc(bestSummary)} <span class="muted">(${best.score.toFixed(1)} score)</span></p>`;
-  const toggleRow = `<div class="charm-actions"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${esc(result.tieKey)}" data-charm-id="${esc(best.charm.id)}">${bestPreviewing ? "Previewing" : "Apply (preview)"}</button><button type="button" class="tiny-btn" data-charm-action="toggle-list" data-result-key="${esc(result.tieKey)}">${expanded ? "Hide suggestions" : `Show more (${visibleSuggestions.length})`}</button><span class="target-inline ${displayStats.meetsTargets ? "met" : "missing"}">${meetsLabel}</span></div>`;
+  const summaryLine = `<p class="charm-summary-line"><strong>${summaryTitle}</strong> ${escText(bestSummary)} <span class="muted">(${best.score.toFixed(1)} score)</span></p>`;
+  const toggleRow = `<div class="charm-actions"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${escAttr(result.tieKey)}" data-charm-id="${escAttr(best.charm.id)}">${bestPreviewing ? "Previewing" : "Apply (preview)"}</button><button type="button" class="tiny-btn" data-charm-action="toggle-list" data-result-key="${escAttr(result.tieKey)}">${expanded ? "Hide suggestions" : `Show more (${visibleSuggestions.length})`}</button><span class="target-inline ${displayStats.meetsTargets ? "met" : "missing"}">${meetsLabel}</span></div>`;
 
   if (!expanded) {
     return `${summaryLine}${toggleRow}${previewNotice}`;
   }
 
-  const list = visibleSuggestions
-    .map((suggestion, index) => {
+  const list = safeJoin(
+    visibleSuggestions.map((suggestion, index) => {
       const slotText = suggestion.charm.slots.join("-");
-      const explainLines = (suggestion.explains ?? []).map((line) => `<li>${esc(line)}</li>`).join("");
+      const explainLines = safeJoin((suggestion.explains ?? []).map((line) => `<li>${escText(line)}</li>`));
       const isPreviewing = previewCharm?.id === suggestion.charm.id;
       return `<article class="flex-suggestion-card charm-suggestion-card">
         <div class="flex-suggestion-header"><strong>Template ${index + 1}</strong><span>Score ${suggestion.score.toFixed(1)}</span></div>
         <p class="muted">Skills: ${renderCharmSuggestionSkillList(suggestion)}</p>
         <p class="muted">Slots: <strong>${slotText}</strong> | ${isOwnedMode ? "Owned charm" : "Theoretical only"}</p>
-        <div class="button-row compact"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${esc(result.tieKey)}" data-charm-id="${esc(suggestion.charm.id)}">${isPreviewing ? "Previewing" : "Apply (preview)"}</button></div>
+        <div class="button-row compact"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${escAttr(result.tieKey)}" data-charm-id="${escAttr(suggestion.charm.id)}">${isPreviewing ? "Previewing" : "Apply (preview)"}</button></div>
         <ul class="flex-loadout-list">${explainLines}</ul>
       </article>`;
-    })
-    .join("");
+    }),
+  );
 
   return `${summaryLine}${toggleRow}${previewNotice}<div class="charm-suggestion-list">${list}</div>`;
+}
+
+function renderLazyFlexSuggestions(result: BuildResult): string {
+  const cached = flexRenderCache.get(result.tieKey);
+  const body = cached ?? `<p class="muted">Expand to generate flex suggestions.</p>`;
+  return `<details class="flex-suggestion-lazy" data-flex-result-key="${escAttr(result.tieKey)}">
+    <summary class="flex-suggestion-lazy-summary">Show flex suggestions</summary>
+    <div class="flex-suggestion-lazy-body">${body}</div>
+  </details>`;
 }
 
 function renderResultCard(result: BuildResult, index: number): string {
@@ -1750,38 +1924,59 @@ function renderResultCard(result: BuildResult, index: number): string {
   const displayStats = getDisplayBuildStats(result, previewCharm);
   const scoreLabel = state.charmMode === "suggest" ? "Score (With Charm)" : "Score (Base)";
   const scoreValue = scoreForSorting(result).toFixed(1);
+  let weaponRollLabel = "Requires weapon set bonus roll";
+  const requiredSetId = result.requiredWeaponSetBonusSetId;
+  if (requiredSetId && state.data) {
+    const requiredSet = state.data.armorSetsById[Number(requiredSetId)];
+    if (requiredSet?.name) {
+      weaponRollLabel = `Requires weapon set bonus roll (${requiredSet.name})`;
+    }
+  }
+  const weaponRollBadge = result.requiresWeaponSetBonusRoll
+    ? `<span class="weapon-roll-pill">${escText(weaponRollLabel)}</span>`
+    : "";
   return `
-<article class="result-card" data-result-key="${esc(result.tieKey)}">
+<article class="result-card" data-result-key="${escAttr(result.tieKey)}">
   <div class="result-header">
-    <h3>#${index + 1}</h3>
+    <h3 class="result-rank"><span class="icon icon-results" aria-hidden="true"></span><span>#${index + 1}</span></h3>
     <div class="result-header-right">
-      <span class="score-pill">${esc(scoreLabel)} ${scoreValue}</span>
+      <span class="score-pill">${escText(scoreLabel)} ${scoreValue}</span>
       <span class="def-pill">DEF ${result.defenseMax}</span>
       ${state.charmMode === "suggest" && (result.missingRequestedPoints ?? 0) > 0 ? `<span class="missing-pill">Base missing ${result.missingRequestedPoints}</span>` : ""}
+      ${weaponRollBadge}
       ${renderCharmDependenceBadge(result)}
     </div>
   </div>
 
   <div class="result-columns">
     <section class="result-block">
-      <h4>Gear</h4>
+      <h4 class="result-heading result-heading-gear"><span class="icon icon-results" aria-hidden="true"></span><span>Gear</span></h4>
       <div class="gear-grid">
         ${renderGearWithDecorations(result)}
       </div>
       <div class="stat-grid">
         <div class="stat-item"><span>Defense</span><strong>${result.defenseBase}/${result.defenseMax}</strong></div>
-        <div class="stat-item"><span>Resists</span><strong>${result.resist.fire}/${result.resist.water}/${result.resist.ice}/${result.resist.thunder}/${result.resist.dragon}</strong></div>
+        <div class="stat-item stat-item-resists">
+          <span>Resists</span>
+          <strong class="resist-row">
+            <span class="resist-value resist-fire" title="Fire resistance">${result.resist.fire}</span>
+            <span class="resist-value resist-water" title="Water resistance">${result.resist.water}</span>
+            <span class="resist-value resist-ice" title="Ice resistance">${result.resist.ice}</span>
+            <span class="resist-value resist-thunder" title="Thunder resistance">${result.resist.thunder}</span>
+            <span class="resist-value resist-dragon" title="Dragon resistance">${result.resist.dragon}</span>
+          </strong>
+        </div>
         <div class="stat-item"><span>Leftover Slot Capacity</span><strong>${displayStats.leftoverSlotCapacity}${previewCharm ? " (preview)" : ""}</strong></div>
       </div>
     </section>
 
     <section class="result-block">
-      <h4>Requested Skills</h4>
+      <h4 class="result-heading result-heading-skills"><span class="icon icon-skills" aria-hidden="true"></span><span>Requested Skills</span></h4>
       ${requestedSkillChecklist(displayStats.skillTotals)}
-      <h4>${state.charmMode === "owned" ? "Owned Charms" : "Suggested RNG Charms (Theoretical)"}</h4>
+      <h4 class="result-heading result-heading-charms"><span class="icon icon-charm" aria-hidden="true"></span><span>${state.charmMode === "owned" ? "Owned Charms" : "Suggested RNG Charms (Theoretical)"}</span></h4>
       ${renderCharmRequirement(result, previewCharm, displayStats)}
-      <h4>Flex Slot Suggestions</h4>
-      ${renderFlexSuggestions(result)}
+      <h4 class="result-heading result-heading-flex"><span class="icon icon-decorations" aria-hidden="true"></span><span>Flex Slot Suggestions</span></h4>
+      ${renderLazyFlexSuggestions(result)}
     </section>
   </div>
 
@@ -1984,7 +2179,10 @@ function shareUrl(): string {
   if (state.huntStatuses.size > 0) {
     p.set("hs", [...state.huntStatuses].sort().join(","));
   }
-  return `${window.location.origin}${window.location.pathname}?${p.toString()}`;
+  const query = p.toString();
+  const shareParams = Object.fromEntries(p.entries());
+  const hashPayload = encodeShareStateV2(shareParams);
+  return `${window.location.origin}${window.location.pathname}?${query}#s2=${hashPayload}`;
 }
 
 async function load(force: boolean): Promise<void> {
@@ -2016,6 +2214,7 @@ function cancelOptimization(): void {
   state.activeWorkerCancels = [];
   state.optimizing = false;
   state.runStatus = "Optimization cancelled.";
+  flushProgressRender();
   rerender();
 }
 
@@ -2037,16 +2236,24 @@ async function optimize(): Promise<void> {
     return;
   }
   const threads = Math.max(1, Math.min(state.threads, MAX_THREADS, heads.length));
+  const threadCapApplied = threads < state.threads;
   const chunks: number[][] = Array.from({ length: threads }, () => []);
   heads.forEach((id, i) => chunks[i % threads].push(id));
   const workerChunks = chunks.filter((chunk) => chunk.length > 0);
   const started = performance.now();
   state.cancelRequested = false;
   state.optimizing = true;
+  if (progressRenderTimer !== null) {
+    window.clearTimeout(progressRenderTimer);
+    progressRenderTimer = null;
+  }
+  lastProgressRenderedAt = 0;
   state.expectedWorkers = workerChunks.length;
   state.workerProgressByIndex = {};
   state.activeWorkerCancels = [];
-  state.runStatus = `Running ${workerChunks.length} workers...`;
+  state.runStatus = threadCapApplied
+    ? `Running ${workerChunks.length} workers... (limited by available work chunks from ${state.threads})`
+    : `Running ${workerChunks.length} workers...`;
   state.rawResults = [];
   state.results = [];
   state.workerStats = [];
@@ -2060,6 +2267,12 @@ async function optimize(): Promise<void> {
       desiredSkills: state.desired,
       allowAlpha: state.allowAlpha,
       allowGamma: state.allowGamma,
+      weaponSetBonusPieces: resolveWeaponSetBonusPiecesForRequest(
+        state.data,
+        state.desired,
+        true,
+        AUTO_WEAPON_SET_BONUS_SET_ID,
+      ),
       useAllDecorations: state.useAllDecos,
       allowedDecorationIds: state.useAllDecos ? [] : [...state.selectedDecos].sort((a, b) => a - b),
       maxResults: state.resultsPerThread,
@@ -2078,12 +2291,15 @@ async function optimize(): Promise<void> {
         const aggregated = aggregateProgress();
         if (aggregated.totalCandidates > 0) {
           const percent = formatPercent(aggregated.evaluatedCandidates, aggregated.totalCandidates);
-          state.runStatus = `Running ${state.expectedWorkers} workers... ${percent}`;
+          state.runStatus = threadCapApplied
+            ? `Running ${state.expectedWorkers} workers... ${percent} (work-chunk limited)`
+            : `Running ${state.expectedWorkers} workers... ${percent}`;
         } else {
-          state.runStatus = `Running ${state.expectedWorkers} workers...`;
+          state.runStatus = threadCapApplied
+            ? `Running ${state.expectedWorkers} workers... (work-chunk limited)`
+            : `Running ${state.expectedWorkers} workers...`;
         }
-        renderProgress();
-        el.runStatus.textContent = state.runStatus;
+        scheduleProgressRender();
       });
       state.activeWorkerCancels.push(task.cancel);
       return task.promise;
@@ -2110,6 +2326,7 @@ async function optimize(): Promise<void> {
     if (!state.cancelRequested) {
       state.optimizing = false;
     }
+    flushProgressRender();
     rerender();
   }
 }
@@ -2117,6 +2334,55 @@ async function optimize(): Promise<void> {
 function refreshAndRenderResults(): void {
   refreshCharmSuggestionsForCurrentResults();
   renderResults();
+}
+
+type QuickPreset = "starter-realistic" | "starter-guidance" | "advanced-theorycraft" | "advanced-owned";
+
+function applyPreset(preset: QuickPreset): void {
+  state.allowAlpha = true;
+  state.allowGamma = true;
+  state.useAllDecos = true;
+  state.selectedDecos = state.data ? new Set(state.data.decorations.map((decoration) => decoration.id)) : new Set<number>();
+  state.charmMode = "off";
+  state.nearMissEnabled = false;
+  state.nearMissMaxMissingPoints = DEFAULT_NEAR_MISS_MAX_MISSING_POINTS;
+  state.filterShowMeetsBase = true;
+  state.filterShowMeetsWithBestCharm = false;
+  state.filterHideHighCharmDependence = false;
+
+  if (preset === "starter-guidance") {
+    state.charmMode = "suggest";
+    state.nearMissEnabled = true;
+    state.nearMissMaxMissingPoints = 2;
+    state.filterShowMeetsBase = true;
+    state.filterShowMeetsWithBestCharm = true;
+    state.filterHideHighCharmDependence = true;
+    state.runStatus = "Applied Starter With Guidance settings. Re-run Optimize to apply.";
+  } else if (preset === "advanced-theorycraft") {
+    state.charmMode = "suggest";
+    state.nearMissEnabled = true;
+    state.nearMissMaxMissingPoints = 5;
+    state.filterShowMeetsBase = true;
+    state.filterShowMeetsWithBestCharm = true;
+    state.filterHideHighCharmDependence = false;
+    state.runStatus = "Applied RNG Theorycraft settings. Re-run Optimize to apply.";
+  } else if (preset === "advanced-owned") {
+    state.charmMode = "owned";
+    state.nearMissEnabled = true;
+    state.nearMissMaxMissingPoints = 3;
+    state.filterShowMeetsBase = true;
+    state.filterShowMeetsWithBestCharm = true;
+    state.filterHideHighCharmDependence = false;
+    state.runStatus = "Applied Owned Validation settings. Import owned charms if needed, then re-run Optimize.";
+  } else {
+    state.runStatus = "Applied Starter Realistic settings. Re-run Optimize to apply.";
+  }
+
+  state.previewCharmByResultKey = {};
+  state.expandedCharmSuggestionsByResultKey = {};
+  clearFlexRenderCache();
+  refreshCharmSuggestionsForCurrentResults();
+  rerender();
 }
 
 function reindexOwnedCharms(charms: Charm[]): Charm[] {
@@ -2255,6 +2521,10 @@ el.decoList.addEventListener("change", () => {
   clearFlexRenderCache();
   renderDecoList();
 });
+el.applyBeginnerRealistic.addEventListener("click", () => applyPreset("starter-realistic"));
+el.applyBeginnerGuidance.addEventListener("click", () => applyPreset("starter-guidance"));
+el.applyAdvancedTheorycraft.addEventListener("click", () => applyPreset("advanced-theorycraft"));
+el.applyAdvancedOwned.addEventListener("click", () => applyPreset("advanced-owned"));
 el.allowAlpha.addEventListener("change", () => (state.allowAlpha = el.allowAlpha.checked));
 el.allowGamma.addEventListener("change", () => (state.allowGamma = el.allowGamma.checked));
 el.threads.addEventListener("change", () => (state.threads = clampInt(el.threads.value, DEFAULT_THREADS, 1, MAX_THREADS)));
@@ -2417,6 +2687,33 @@ el.results.addEventListener("click", (event) => {
   }
   rerenderResultCardByKey(resultKey);
 });
+el.results.addEventListener(
+  "toggle",
+  (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLDetailsElement)) {
+      return;
+    }
+    if (!target.classList.contains("flex-suggestion-lazy") || !target.open) {
+      return;
+    }
+    const resultKey = target.dataset.flexResultKey;
+    if (!resultKey || flexRenderCache.has(resultKey)) {
+      return;
+    }
+    const result = state.results.find((entry) => entry.tieKey === resultKey);
+    if (!result) {
+      return;
+    }
+    const body = target.querySelector<HTMLDivElement>(".flex-suggestion-lazy-body");
+    if (!body) {
+      return;
+    }
+    body.innerHTML = `<p class="muted">Generating flex suggestions...</p>`;
+    body.innerHTML = renderFlexSuggestions(result);
+  },
+  true,
+);
 el.flexPreset.addEventListener("change", () => {
   const value = el.flexPreset.value as FlexPresetMode;
   state.flexPresetMode = ["auto", "comfort", "balanced", "damage"].includes(value) ? value : "auto";
@@ -2458,3 +2755,4 @@ el.copyLink.addEventListener("click", async () => {
 });
 
 load(false).catch(() => undefined);
+

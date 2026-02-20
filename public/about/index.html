@@ -6,14 +6,14 @@
     <title>About | MH Wilds Skill-First Gear Optimizer</title>
     <meta
       name="description"
-      content="About the MH Wilds Skill-First Gear Optimizer: data sources, scope, and how build ranking works."
+      content="Complete guide to the MH Wilds Skill-First Gear Optimizer: controls, set bonus modeling, result interpretation, and recommended filter setups."
     />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
     <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/about/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/site-pages.css" />
   </head>
-  <body>
+  <body class="theme-mhwilds">
     <main class="site-shell">
       <section class="site-hero">
         <p class="site-kicker">MHWilds Optimizer</p>
@@ -28,52 +28,161 @@
 
       <section class="site-panel site-stack">
         <div class="block">
-          <h2>Project Scope</h2>
+          <h2 class="section-title"><span class="section-icon icon-results" aria-hidden="true"></span><span>What This Tool Does</span></h2>
           <p>
-            MH Wilds Skill-First Gear Optimizer is a skill-first planner for Monster Hunter Wilds. It
-            helps you define target skills, search valid armor/deco combinations, and evaluate charm
-            requirements for each result.
+            MH Wilds Skill-First Gear Optimizer is a skill-first planner for Monster Hunter Wilds.
+            You choose targets, then the solver searches armor, decorations, and charm paths that can
+            satisfy those targets under your filters.
+          </p>
+          <ul>
+            <li>Supports armor skills plus Set Bonus and Group Bonus requirements.</li>
+            <li>Compares charm modes: Off, Suggest After (theoretical), and Owned charms.</li>
+            <li>Automatically checks Artian weapon set-bonus coverage (+1 set piece) for relevant targets.</li>
+            <li>Highlights dependency badges so you can spot risky assumptions quickly.</li>
+          </ul>
+          <p>
+            This tool is for build planning and feasibility. It does not calculate weapon damage
+            rotations or RNG probability for rolls.
           </p>
         </div>
         <div class="block">
-          <h2>Tools In This Site</h2>
-          <p>
-            <strong>Skill-First Gear Optimizer:</strong> Build search tool for target skills, armor
-            filters, decoration pool control, near-miss handling, and charm-mode evaluation.
-          </p>
-          <p>
-            <strong>Owned Charm Builder:</strong> Form-based page for creating/editing owned charms,
-            with JSON import/export and direct sync to optimizer storage for Owned Charm mode.
-          </p>
+          <h2 class="section-title"><span class="section-icon icon-controls" aria-hidden="true"></span><span>How A Run Works</span></h2>
+          <ol>
+            <li>Add desired skills and levels in <strong>Desired Skills</strong>.</li>
+            <li>Choose allowed decorations in <strong>Decoration Pool</strong>.</li>
+            <li>Set <strong>Controls</strong> (armor rarity toggles, charm mode, threads, result limits).</li>
+            <li>Run Optimize and review required skills, defense/resists, and leftover slots.</li>
+            <li>Use badges and flex suggestions to decide whether a result is practical for your hunt.</li>
+          </ol>
         </div>
         <div class="site-columns">
           <article class="block">
-            <h3>Data Source</h3>
+            <h3 class="section-title"><span class="section-icon icon-controls" aria-hidden="true"></span><span>Tools In This Site</span></h3>
             <p>
-              Build data comes from MHDB Wilds API endpoints for armor, armor sets, skills, decorations,
-              and charms. The app fetches and caches data client-side.
+              <strong>Skill-First Gear Optimizer:</strong> Main build search page with solver controls,
+              near-miss handling, charm evaluation, and result ranking.
+            </p>
+            <p>
+              <strong>Owned Charm Builder:</strong> Form UI for creating/editing your charm library,
+              plus JSON import/export. Owned mode reads this same local data.
             </p>
           </article>
           <article class="block">
-            <h3>Ranking Model</h3>
-            <p>
-              Valid builds are ranked by score metrics such as defense, slot utility, and target-skill
-              efficiency. Charm suggestion mode can additionally re-rank using best post-build charm
-              completion.
-            </p>
+            <h3 class="section-title"><span class="section-icon icon-results" aria-hidden="true"></span><span>Interpreting Results</span></h3>
+            <ul>
+              <li><strong>Score (With Charm):</strong> Overall ranking score after selected charm evaluation path.</li>
+              <li><strong>Charm dependence:</strong> How strongly completion depends on charm help.</li>
+              <li><strong>Requires weapon set bonus roll:</strong> Build fails constraints if weapon set piece is removed.</li>
+              <li><strong>Requested Skills:</strong> Shows exact met/missing levels per target.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="block">
+          <h2 class="section-title"><span class="section-icon icon-charm" aria-hidden="true"></span><span>Weapon Set Bonus Modeling (Artian)</span></h2>
+          <p>
+            The optimizer now automatically models whether an Artian weapon can contribute
+            <strong>+1 set piece</strong> for requested Set/Group bonus targets.
+          </p>
+          <ul>
+            <li>Deterministic only: no probability weighting is applied.</li>
+            <li>No separate toggle is required in Controls.</li>
+            <li>If a result depends on weapon contribution, it is labeled in the result header.</li>
+            <li>When possible, the label includes the specific required set name.</li>
+          </ul>
+        </div>
+        <div class="site-columns">
+          <article class="block">
+            <h3 class="section-title"><span class="section-icon icon-skills" aria-hidden="true"></span><span>Beginner Filter Setups</span></h3>
+            <section class="setup-profile">
+              <p class="setup-name">Starter Realistic</p>
+              <p><strong>Use when:</strong> You want only directly craftable, no-theory baseline sets.</p>
+              <ul>
+                <li>Charm Mode = Off</li>
+                <li>Allow &alpha; armor = On</li>
+                <li>Allow &gamma; armor = On</li>
+                <li>Decoration Pool = All selected</li>
+                <li>Allow Near-Miss Solver Results = Off</li>
+              </ul>
+            </section>
+            <section class="setup-profile">
+              <p class="setup-name">Starter With Guidance</p>
+              <p><strong>Use when:</strong> You want practical sets plus simple theoretical completion hints.</p>
+              <ul>
+                <li>Charm Mode = Suggest After</li>
+                <li>Allow Near-Miss Solver Results = On</li>
+                <li>Near-Miss Max Missing Points = 2</li>
+                <li>Show meets targets without charm = On</li>
+                <li>Show meets targets with best charm = On</li>
+                <li>Hide HIGH charm dependence = On (optional, cleaner list)</li>
+              </ul>
+            </section>
+          </article>
+          <article class="block">
+            <h3 class="section-title"><span class="section-icon icon-controls" aria-hidden="true"></span><span>Advanced Filter Setups</span></h3>
+            <section class="setup-profile">
+              <p class="setup-name">RNG Theorycraft</p>
+              <p><strong>Use when:</strong> You want to explore high-ceiling builds with broader completion paths.</p>
+              <ul>
+                <li>Charm Mode = Suggest After</li>
+                <li>Allow Near-Miss Solver Results = On</li>
+                <li>Near-Miss Max Missing Points = 4 to 6</li>
+                <li>Hide HIGH charm dependence = Off</li>
+                <li>Increase Charm Suggest Count to compare multiple template paths</li>
+              </ul>
+            </section>
+            <section class="setup-profile">
+              <p class="setup-name">Owned Charm Validation</p>
+              <p><strong>Use when:</strong> You want realistic results strictly from your personal charm inventory.</p>
+              <ul>
+                <li>Charm Mode = Owned</li>
+                <li>Import/maintain charms in Owned Charm Builder</li>
+                <li>Allow Near-Miss Solver Results = On (2 to 3 suggested)</li>
+                <li>Show meets targets without charm = On</li>
+                <li>Show meets targets with best charm = On</li>
+              </ul>
+            </section>
+            <section class="setup-profile">
+              <p class="setup-name">Weapon-Assisted Set Bonus Check</p>
+              <p><strong>Use when:</strong> Your target set bonus is one piece short and weapon roll coverage matters.</p>
+              <ul>
+                <li>Add the relevant Set/Group bonus skill target(s) in Desired Skills.</li>
+                <li>Run Optimize and check for weapon-roll dependency badge(s).</li>
+                <li>Review <strong>Requires weapon set bonus roll</strong> badge before committing a build</li>
+              </ul>
+            </section>
           </article>
         </div>
         <div class="site-columns">
           <article class="block">
-            <h3>Beginner Filter Setups</h3>
-            <p><strong>Starter Realistic:</strong> Charm Mode = Off, Allow alpha/gamma = On, All decorations selected, Near-miss disabled.</p>
-            <p><strong>Starter With Guidance:</strong> Charm Mode = Suggest After, Near-miss enabled, Near-miss max missing points = 2, Show meets without charm = On, Show meets with best charm = On.</p>
+            <h3 class="section-title"><span class="section-icon icon-results" aria-hidden="true"></span><span>Performance Tips</span></h3>
+            <ul>
+              <li>Start near 60 to 80 percent of your available threads, then tune upward.</li>
+              <li>Keep <strong>Max Results Per Thread</strong> around 25 to 50 unless you need deeper tails.</li>
+              <li>Constrain skill targets and decoration pool before increasing thread count.</li>
+              <li>For large near-miss searches, begin at missing points 2 to 3, then widen only if needed.</li>
+            </ul>
           </article>
           <article class="block">
-            <h3>Advanced Filter Setups</h3>
-            <p><strong>RNG Theorycraft:</strong> Charm Mode = Suggest After, Near-miss enabled, Near-miss max missing points = 4-6, Hide HIGH charm dependence = Off.</p>
-            <p><strong>Owned Charm Validation:</strong> Charm Mode = Owned, import your charm library, Near-miss enabled (2-3), Show meets without charm = On and Show meets with best charm = On to compare realistic vs charm-assisted outputs.</p>
+            <h3 class="section-title"><span class="section-icon icon-data" aria-hidden="true"></span><span>Sharing, Cache, and Privacy</span></h3>
+            <ul>
+              <li>Copy-link stores current state in a versioned share payload for compatibility.</li>
+              <li>Weapon-roll inference is automatic from selected targets, so recipients reproduce behavior from shared filters.</li>
+              <li>Data is fetched from MHDB and cached locally for faster reloads and fallback behavior.</li>
+              <li>Owned charm data is stored locally in your browser; it is not uploaded by this site.</li>
+            </ul>
           </article>
+        </div>
+        <div class="block">
+          <h2 class="section-title"><span class="section-icon icon-data" aria-hidden="true"></span><span>Data Source and Scope</span></h2>
+          <p>
+            Build data comes from MHDB Wilds API endpoints for armor, armor sets, skills, decorations,
+            and charms.
+          </p>
+          <p>
+            This project prioritizes feasibility and planning transparency over damage simulation.
+            Use it to discover valid combinations and understand trade-offs, then validate final hunt
+            performance in-game.
+          </p>
         </div>
         <p class="muted">This project is fan-made and not affiliated with Capcom.</p>
       </section>

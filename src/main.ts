@@ -99,6 +99,7 @@ type State = {
   flexPresetMode: FlexPresetMode;
   huntElement: HuntElement | "";
   huntStatuses: Set<HuntStatus>;
+  allowWeaponSetBonusRoll: boolean;
 };
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -233,6 +234,10 @@ root.innerHTML = `
           <option value="owned">Owned (v2 stub)</option>
         </select>
       </label>
+      <label class="checkbox-line" title="When enabled, optimizer may use an inferred Artian weapon set-bonus roll (+1 set piece) for requested set/group targets.">
+        <input id="allow-weapon-set-bonus-roll" type="checkbox"/>
+        <span>Allow Artian weapon set-bonus roll (auto)</span>
+      </label>
     </div>
     <div class="controls-optional">
       <details class="optional-block">
@@ -345,6 +350,7 @@ const el = {
   threads: document.querySelector<HTMLInputElement>("#threads")!,
   resultsPerThread: document.querySelector<HTMLInputElement>("#results-per-thread")!,
   charmMode: document.querySelector<HTMLSelectElement>("#charm-mode")!,
+  allowWeaponSetBonusRoll: document.querySelector<HTMLInputElement>("#allow-weapon-set-bonus-roll")!,
   charmSuggestCount: document.querySelector<HTMLInputElement>("#charm-suggest-count")!,
   charmMaxSkills: document.querySelector<HTMLInputElement>("#charm-max-skills")!,
   charmSkillCap: document.querySelector<HTMLInputElement>("#charm-skill-cap")!,
@@ -396,6 +402,7 @@ function getStateParam(name: string): string | null {
 const decoParam = getStateParam("decos");
 const flexPresetParam = getStateParam("fp");
 const charmModeParam = getStateParam("cm");
+const allowWeaponSetBonusRollParam = getStateParam("awr");
 const charmSuggestCountParam = getStateParam("sc");
 const charmMaxSkillsParam = getStateParam("mss");
 const charmSkillCapParam = getStateParam("msl");
@@ -420,6 +427,7 @@ const parsedFlexPresetMode: FlexPresetMode = validFlexPresetModes.includes((flex
 const parsedCharmMode: CharmMode = validCharmModes.includes((charmModeParam as CharmMode) || "off")
   ? ((charmModeParam as CharmMode) || "off")
   : "off";
+const parsedAllowWeaponSetBonusRoll = parseBool(allowWeaponSetBonusRollParam, true);
 const parsedSkillKindFilter: SkillKindFilter = validSkillKindFilters.includes((skillKindFilterParam as SkillKindFilter) || "all")
   ? ((skillKindFilterParam as SkillKindFilter) || "all")
   : "all";
@@ -507,6 +515,7 @@ const state: State = {
   skillKindFilter: parsedSkillKindFilter,
   decoSearch: "",
   charmMode: parsedCharmMode,
+  allowWeaponSetBonusRoll: parsedAllowWeaponSetBonusRoll,
   charmSuggestCount: parsedCharmSuggestCount,
   charmMaxSuggestedSkills: parsedCharmMaxSkills,
   charmMaxSkillLevelPerSkill: parsedCharmSkillCap,
@@ -993,6 +1002,7 @@ function rerender(): void {
   el.threads.value = String(state.threads);
   el.resultsPerThread.value = String(state.resultsPerThread);
   el.charmMode.value = state.charmMode;
+  el.allowWeaponSetBonusRoll.checked = state.allowWeaponSetBonusRoll;
   el.charmSuggestCount.value = String(state.charmSuggestCount);
   el.charmMaxSkills.value = String(state.charmMaxSuggestedSkills);
   el.charmSkillCap.value = String(state.charmMaxSkillLevelPerSkill);
@@ -2179,6 +2189,9 @@ function shareUrl(): string {
   if (state.huntStatuses.size > 0) {
     p.set("hs", [...state.huntStatuses].sort().join(","));
   }
+  if (!state.allowWeaponSetBonusRoll) {
+    p.set("awr", "0");
+  }
   const query = p.toString();
   const shareParams = Object.fromEntries(p.entries());
   const hashPayload = encodeShareStateV2(shareParams);
@@ -2270,7 +2283,7 @@ async function optimize(): Promise<void> {
       weaponSetBonusPieces: resolveWeaponSetBonusPiecesForRequest(
         state.data,
         state.desired,
-        true,
+        state.allowWeaponSetBonusRoll,
         AUTO_WEAPON_SET_BONUS_SET_ID,
       ),
       useAllDecorations: state.useAllDecos,
@@ -2544,6 +2557,11 @@ el.charmMode.addEventListener("change", () => {
   state.previewCharmByResultKey = {};
   state.expandedCharmSuggestionsByResultKey = {};
   refreshCharmSuggestionsForCurrentResults();
+  rerender();
+});
+el.allowWeaponSetBonusRoll.addEventListener("change", () => {
+  state.allowWeaponSetBonusRoll = el.allowWeaponSetBonusRoll.checked;
+  state.runStatus = "Weapon set bonus setting changed. Re-run Optimize to apply.";
   rerender();
 });
 el.charmSuggestCount.addEventListener("change", () => {

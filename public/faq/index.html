@@ -59,10 +59,10 @@
           },
           {
             "@type": "Question",
-            "name": "Do I need to enable a weapon set-bonus toggle?",
+            "name": "What does Allow Artian weapon set-bonus roll (auto) do?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "No. The optimizer automatically checks relevant Artian weapon plus one set-piece coverage when your requested skills include set or group bonus targets. This is deterministic modeling and does not estimate roll chance."
+              "text": "When enabled, the optimizer may use an inferred Artian weapon plus one set-piece contribution for requested set or group bonus targets. Turn it off for armor-only feasibility. This is deterministic modeling and does not estimate roll chance."
             }
           },
           {
@@ -86,7 +86,7 @@
             "name": "Do shared links preserve weapon set-bonus behavior?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. Share links preserve your requested targets and filters, and automatic weapon set-bonus inference runs from that same state."
+              "text": "Yes. Share links preserve requested targets, filters, and weapon-roll toggle state."
             }
           },
           {
@@ -195,11 +195,11 @@
         <div class="block">
           <h3 class="section-title"><span class="section-icon icon-charm" aria-hidden="true"></span><span>Weapon Set Bonus Roll</span></h3>
           <details class="faq-item">
-            <summary>Do I need to enable a weapon set-bonus toggle?</summary>
+            <summary>What does Allow Artian weapon set-bonus roll (auto) do?</summary>
             <p>
-              No. The optimizer automatically checks relevant Artian weapon +1 set-piece coverage
-              when your requested skills include set/group bonus targets. This is deterministic
-              modeling only. It does not estimate roll probability.
+              When enabled, the optimizer may use inferred Artian weapon +1 set-piece coverage
+              for requested set/group bonus targets. Turn it off to evaluate armor-only feasibility.
+              This is deterministic modeling only. It does not estimate roll probability.
             </p>
           </details>
           <details class="faq-item">
@@ -216,8 +216,7 @@
           <details class="faq-item">
             <summary>Do shared links preserve weapon set-bonus behavior?</summary>
             <p>
-              Yes. Share links preserve requested targets and filters, and automatic weapon set-bonus
-              inference runs from that same state.
+              Yes. Share links preserve requested targets, filters, and weapon-roll toggle state.
             </p>
           </details>
           <details class="faq-item">

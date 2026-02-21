@@ -80,12 +80,13 @@
         <div class="block">
           <h2 class="section-title"><span class="section-icon icon-charm" aria-hidden="true"></span><span>Weapon Set Bonus Modeling (Artian)</span></h2>
           <p>
-            The optimizer now automatically models whether an Artian weapon can contribute
-            <strong>+1 set piece</strong> for requested Set/Group bonus targets.
+            Use <strong>Allow Artian weapon set-bonus roll (auto)</strong> to let the optimizer infer
+            relevant Artian weapon set coverage (<strong>+1 set piece</strong>) from your requested
+            Set/Group bonus targets.
           </p>
           <ul>
             <li>Deterministic only: no probability weighting is applied.</li>
-            <li>No separate toggle is required in Controls.</li>
+            <li>Turn it off to view armor-only feasibility without weapon-assisted set bonus.</li>
             <li>If a result depends on weapon contribution, it is labeled in the result header.</li>
             <li>When possible, the label includes the specific required set name.</li>
           </ul>
@@ -166,7 +167,7 @@
             <h3 class="section-title"><span class="section-icon icon-data" aria-hidden="true"></span><span>Sharing, Cache, and Privacy</span></h3>
             <ul>
               <li>Copy-link stores current state in a versioned share payload for compatibility.</li>
-              <li>Weapon-roll inference is automatic from selected targets, so recipients reproduce behavior from shared filters.</li>
+              <li>Weapon-roll toggle state is included in share links so recipients reproduce the same assumptions.</li>
               <li>Data is fetched from MHDB and cached locally for faster reloads and fallback behavior.</li>
               <li>Owned charm data is stored locally in your browser; it is not uploaded by this site.</li>
             </ul>

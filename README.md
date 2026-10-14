@@ -23,6 +23,7 @@ The live benchmark needs internet access. Its timings depend on the current data
 
 Deploy the generated `dist` directory to static hosting. Cloudflare Pages: build command `npm run build`, output directory `dist`, supported Node version. GitHub pushes do not independently confirm that the hosting deployment succeeded.
 GitHub Pages uses `.github/workflows/pages.yml` to build and deploy `dist` with the official Pages actions. Relative asset/navigation paths support the repository subdirectory as well as Cloudflare's domain root. Browser tests cover both hosting layouts.
+In repository Settings → Pages → Build and deployment, set Source to **GitHub Actions**. The workflow token cannot change that repository setting; branch/Jekyll publishing serves raw source and must be disabled.
 
 ## Search behavior
 

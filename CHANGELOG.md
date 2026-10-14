@@ -2,6 +2,9 @@
 
 ## 2026-10-13
 
+- Repair GitHub Pages deployment to publish the production build instead of raw TypeScript; use portable asset, page, manifest and embedded-editor paths.
+- Restore a visible Set bonus optimizer with set/group targets and piece-threshold guidance; add set-only search and navigation tests on domain-root and repository-path hosting.
+
 - Fix armor bounds that rejected builds completed by decorations, near-miss handling, and decoration assignment quality.
 - Search equipped owned talismans directly instead of adding them on top of craftable talismans.
 - Preserve weapon skills, weapon slots, unknown skill IDs and inventory metadata; add backed-up imports and non-destructive editing.

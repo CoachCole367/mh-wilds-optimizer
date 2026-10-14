@@ -22,6 +22,7 @@ npm run bench:live
 The live benchmark needs internet access. Its timings depend on the current dataset and machine; the tiny fixture benchmark is not an endgame performance guarantee. Browser tests intercept MHDB with deterministic fixtures and run against the production build. There is no separate lint command; TypeScript checks are part of build.
 
 Deploy the generated `dist` directory to static hosting. Cloudflare Pages: build command `npm run build`, output directory `dist`, supported Node version. GitHub pushes do not independently confirm that the hosting deployment succeeded.
+GitHub Pages uses `.github/workflows/pages.yml` to build and deploy `dist` with the official Pages actions. Relative asset/navigation paths support the repository subdirectory as well as Cloudflare's domain root. Browser tests cover both hosting layouts.
 
 ## Search behavior
 

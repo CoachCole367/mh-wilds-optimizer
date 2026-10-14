@@ -31,7 +31,7 @@ async function mockData(context: BrowserContext) {
   });
 }
 async function ready(page: Page) {
-  await page.goto("/");
+  await page.goto("./");
   await expect(page.locator("#data-status")).toContainText("browser-fixture");
   await page
     .getByRole("searchbox", { name: "Search skills", exact: true })
@@ -55,6 +55,44 @@ test.beforeEach(async ({ context }) => {
   await mockData(context);
 });
 
+test("visible set bonus optimizer supports a set-only target and project navigation", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await expect(page.locator("#data-status")).toContainText("browser-fixture");
+  await expect(
+    page.getByRole("heading", { name: "Set bonus optimizer", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Set or group bonus", exact: true })
+    .selectOption("3");
+  await expect(page.locator("#set-thresholds")).toContainText("2 pieces");
+  await page
+    .getByRole("button", { name: "Require this bonus", exact: true })
+    .click();
+  await search(page);
+  await expect(page.locator(".result-card").first()).toContainText(
+    "Set Synergy: 1/1 met",
+  );
+  await page
+    .getByRole("link", { name: "Talisman library", exact: true })
+    .first()
+    .click();
+  await expect(page.locator("#add-charm")).toBeVisible();
+  await expect(page.locator(".skill-select option").first()).toBeAttached();
+  await page.getByRole("link", { name: "Optimizer", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Set bonus optimizer", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "FAQ", exact: true }).first().click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Frequently asked questions",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
 test("owned jewel quantities determine feasibility and changed settings invalidate results", async ({
   page,
 }) => {
@@ -75,7 +113,7 @@ test("owned jewel quantities determine feasibility and changed settings invalida
 test("talisman editing preserves the original until saved and escapes imported names", async ({
   page,
 }) => {
-  await page.goto("/charm-builder/");
+  await page.goto("./charm-builder/");
   await expect(page.locator(".skill-select option").first()).toBeAttached();
   await page.locator("#charm-name").fill("<img src=x onerror=alert(1)>");
   await page.locator("#weapon-slot").fill("2");
@@ -136,7 +174,7 @@ test("one owned talisman is equipped and worker counts preserve the best result"
 }) => {
   await ready(page);
   const builder = await context.newPage();
-  await builder.goto("/charm-builder/");
+  await builder.goto("./charm-builder/");
   await expect(builder.locator(".skill-select option").first()).toBeAttached();
   await builder.locator("#charm-name").fill("My Constitution talisman");
   await builder.locator(".skill-select").selectOption("1");

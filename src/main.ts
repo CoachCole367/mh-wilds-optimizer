@@ -363,6 +363,56 @@ function renderSkills(): void {
       .join("") || "<p>No matching skills.</p>";
   $("more-skills").hidden = matching.length <= visibleSkills;
 }
+function renderSetTargets(): void {
+  if (!data) return;
+  const select = $<HTMLSelectElement>("set-target");
+  const previous = select.value;
+  select.innerHTML = data.skills
+    .filter((s) => s.kind === "set" || s.kind === "group")
+    .map(
+      (s) =>
+        `<option value="${s.id}">${esc(s.name)} (${s.kind} bonus)</option>`,
+    )
+    .join("");
+  if (data.skillsById[Number(previous)]) select.value = previous;
+  renderSetLevels();
+}
+function renderSetLevels(): void {
+  if (!data) return;
+  const id = Number(value("set-target")),
+    skill = data.skillsById[id];
+  const level = $<HTMLSelectElement>("set-level");
+  const previous = level.value;
+  level.innerHTML = skill
+    ? Array.from(
+        { length: skill.maxLevel },
+        (_, i) => `<option value="${i + 1}">Level ${i + 1}</option>`,
+      ).join("")
+    : "";
+  if ([...level.options].some((o) => o.value === previous))
+    level.value = previous;
+  const ranks = Object.values(data.armorSetsById).flatMap((set) =>
+    (skill?.kind === "group" ? set.groupBonusRanks : set.bonusRanks)
+      .filter((rank) => rank.skills[id])
+      .map((rank) => `${rank.pieces} pieces → level ${rank.skills[id]}`),
+  );
+  $("set-thresholds").textContent =
+    [...new Set(ranks)].join(" · ") ||
+    "No bonus thresholds available in this dataset.";
+  $<HTMLButtonElement>("set-add").disabled = !skill || !!active;
+}
+function addRequiredTarget(id: number, level = 1): void {
+  if (active || !data?.skillsById[id]) return;
+  const existing = desired.find((d) => d.skillId === id);
+  if (existing) {
+    existing.level = level;
+    existing.optional = false;
+  } else desired.push({ skillId: id, level });
+  renderDesired();
+  renderSkills();
+  renderDecos();
+  changed();
+}
 function renderDesired(): void {
   if (!data) return;
   $("desired-list").innerHTML =
@@ -813,6 +863,7 @@ async function load(force = false): Promise<void> {
       `${data.skills.length} skills, ${Object.keys(data.armorById).length} pieces, ${data.decorations.length} decorations. Equipment counts do not certify complete patch coverage.`;
     renderMode();
     renderEquipment();
+    renderSetTargets();
     renderSkills();
     renderDesired();
     renderDecos();
@@ -893,6 +944,10 @@ $("skill-search").addEventListener("input", () => {
   visibleSkills = 20;
   renderSkills();
 });
+$("set-target").addEventListener("change", renderSetLevels);
+$("set-add").addEventListener("click", () =>
+  addRequiredTarget(Number(value("set-target")), Number(value("set-level"))),
+);
 $("skill-type").addEventListener("change", () => {
   visibleSkills = 20;
   renderSkills();
@@ -913,11 +968,7 @@ $("skill-options").addEventListener("click", (event) => {
   }
   const id = Number(b.dataset.addSkill);
   if (!data?.skillsById[id] || desired.some((d) => d.skillId === id)) return;
-  desired.push({ skillId: id, level: 1 });
-  renderDesired();
-  renderSkills();
-  renderDecos();
-  changed();
+  addRequiredTarget(id);
 });
 $("desired-list").addEventListener("click", (event) => {
   const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");

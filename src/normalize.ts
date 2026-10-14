@@ -31,8 +31,10 @@ type RawSkill = {
 
 type RawSkillLevelEntry = {
   level?: number;
+  setPiecesRequired?: number | null;
   skill?: {
     id?: number;
+    kind?: string;
   };
 };
 
@@ -40,6 +42,7 @@ type RawArmor = {
   id: number;
   name: string;
   kind: string;
+  rank?: string;
   rarity?: number;
   defense?: {
     base?: number;
@@ -147,7 +150,13 @@ function toSkillPoints(entries: RawSkillLevelEntry[] | undefined): SkillPoints {
   for (const entry of entries) {
     const skillId = entry.skill?.id;
     const level = entry.level ?? 0;
-    if (!skillId || level === 0) {
+    if (
+      !skillId ||
+      level <= 0 ||
+      entry.setPiecesRequired ||
+      entry.skill?.kind === "set" ||
+      entry.skill?.kind === "group"
+    ) {
       continue;
     }
     out[skillId] = (out[skillId] ?? 0) + level;
@@ -178,7 +187,10 @@ function toBonusRanks(raw: RawBonus | null | undefined): ArmorSetBonusRank[] {
   return output;
 }
 
-function toSkillInfo(rawSkills: RawSkill[]): { skills: SkillInfo[]; byId: Record<number, SkillInfo> } {
+function toSkillInfo(rawSkills: RawSkill[]): {
+  skills: SkillInfo[];
+  byId: Record<number, SkillInfo>;
+} {
   const skills = rawSkills
     .map((skill) => {
       const maxLevel = (skill.ranks ?? []).reduce((max, rank) => {
@@ -194,7 +206,9 @@ function toSkillInfo(rawSkills: RawSkill[]): { skills: SkillInfo[]; byId: Record
         rankDescriptions: Object.fromEntries(
           (skill.ranks ?? [])
             .map((rank) => [rank.level ?? 0, rank.description ?? ""] as const)
-            .filter(([level, description]) => level > 0 && description.length > 0),
+            .filter(
+              ([level, description]) => level > 0 && description.length > 0,
+            ),
         ),
       };
     })
@@ -207,7 +221,9 @@ function toSkillInfo(rawSkills: RawSkill[]): { skills: SkillInfo[]; byId: Record
   return { skills, byId };
 }
 
-function toArmorSets(rawArmorSets: RawArmorSet[]): Record<number, ArmorSetInfo> {
+function toArmorSets(
+  rawArmorSets: RawArmorSet[],
+): Record<number, ArmorSetInfo> {
   const byId: Record<number, ArmorSetInfo> = {};
   for (const armorSet of rawArmorSets) {
     byId[armorSet.id] = {
@@ -226,9 +242,10 @@ function isArmorKind(value: string): value is ArmorKind {
   return ARMOR_KINDS.includes(value as ArmorKind);
 }
 
-function toArmor(
-  rawArmor: RawArmor[],
-): { byKind: Record<ArmorKind, ArmorPiece[]>; byId: Record<number, ArmorPiece> } {
+function toArmor(rawArmor: RawArmor[]): {
+  byKind: Record<ArmorKind, ArmorPiece[]>;
+  byId: Record<number, ArmorPiece>;
+} {
   const byKind: Record<ArmorKind, ArmorPiece[]> = {
     head: [],
     chest: [],
@@ -249,6 +266,8 @@ function toArmor(
       name: armor.name,
       kind: armor.kind,
       rarity: armor.rarity ?? 0,
+      rank: armor.rank ?? "unknown",
+      upgradeState: "database",
       defenseBase: armor.defense?.base ?? 0,
       defenseMax: armor.defense?.max ?? 0,
       resist: {
@@ -329,7 +348,10 @@ function toCharmRanks(rawCharms: RawCharm[]): {
   return { charmRanks, byId };
 }
 
-export function normalizeWildsPayload(raw: RawWildsPayload, options: NormalizeOptions): NormalizedData {
+export function normalizeWildsPayload(
+  raw: RawWildsPayload,
+  options: NormalizeOptions,
+): NormalizedData {
   const { skills, byId: skillsById } = toSkillInfo(raw.skills);
   const armorSetsById = toArmorSets(raw.armorSets);
   const { byKind: armorByKind, byId: armorById } = toArmor(raw.armor);

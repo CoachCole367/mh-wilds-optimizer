@@ -27,7 +27,10 @@ function fromBase64(base64: string): Uint8Array {
 }
 
 function toBase64Url(text: string): string {
-  return toBase64(ENCODER.encode(text)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return toBase64(ENCODER.encode(text))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function fromBase64Url(encoded: string): string {
@@ -37,10 +40,12 @@ function fromBase64Url(encoded: string): string {
 }
 
 function isShareStateMap(value: unknown): value is ShareStateMap {
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  for (const [key, mapValue] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, mapValue] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
     if (typeof key !== "string" || typeof mapValue !== "string") {
       return false;
     }
@@ -58,7 +63,7 @@ export function encodeShareStateV2(params: ShareStateMap): string {
 }
 
 export function decodeShareStateV2(hash: string): ShareStateMap | null {
-  if (!hash) {
+  if (!hash || hash.length > 40000) {
     return null;
   }
   const rawHash = hash.startsWith("#") ? hash.slice(1) : hash;

@@ -1,11 +1,12 @@
 export type CacheEnvelope<T> = {
+  schemaVersion?: number;
   locale: string;
   version: string;
   fetchedAt: number;
   data: T;
 };
 
-const DB_NAME = "mh-wilds-optimizer-cache";
+const DB_NAME = "mh-wilds-optimizer-cache-v3";
 const DB_VERSION = 1;
 const STORE_NAME = "locale-cache";
 
@@ -36,7 +37,9 @@ function openDb(): Promise<IDBDatabase | null> {
   });
 }
 
-export async function readCacheEnvelope<T>(locale: string): Promise<CacheEnvelope<T> | null> {
+export async function readCacheEnvelope<T>(
+  locale: string,
+): Promise<CacheEnvelope<T> | null> {
   const db = await openDb();
   if (!db) {
     return null;
@@ -55,7 +58,10 @@ export async function readCacheEnvelope<T>(locale: string): Promise<CacheEnvelop
   });
 }
 
-export async function writeCacheEnvelope<T>(locale: string, envelope: CacheEnvelope<T>): Promise<void> {
+export async function writeCacheEnvelope<T>(
+  locale: string,
+  envelope: CacheEnvelope<T>,
+): Promise<void> {
   const db = await openDb();
   if (!db) {
     return;

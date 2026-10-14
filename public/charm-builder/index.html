@@ -8,8 +8,14 @@
       name="description"
       content="Create and manage your owned Monster Hunter Wilds charms with a form-based editor, then sync directly into Owned Charm mode."
     />
-    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
-    <link rel="canonical" href="https://mh-wilds-optimizer.pages.dev/charm-builder/" />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <link
+      rel="canonical"
+      href="https://mh-wilds-optimizer.pages.dev/charm-builder/"
+    />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/site-pages.css" />
   </head>
@@ -22,12 +28,17 @@
           <a class="site-link" href="/">Optimizer</a>
           <a class="site-link" href="/about/index.html">About</a>
           <a class="site-link" href="/faq/index.html">FAQ</a>
-          <a class="site-link active" href="/charm-builder/index.html">Owned Charm Builder</a>
+          <a class="site-link active" href="/charm-builder/index.html"
+            >Owned Charm Builder</a
+          >
         </nav>
       </section>
 
       <section class="site-panel">
-        <h2 class="section-title"><span class="section-icon icon-charm" aria-hidden="true"></span><span>Create Charm</span></h2>
+        <h2 class="section-title">
+          <span class="section-icon icon-charm" aria-hidden="true"></span
+          ><span>Create Charm</span>
+        </h2>
         <p class="muted">Use this panel to add one owned charm at a time.</p>
         <div class="grid">
           <label>
@@ -72,29 +83,57 @@
           </label>
         </div>
         <div id="skill-rows" class="skill-rows"></div>
+        <label
+          >Weapon decoration slot
+          <input id="weapon-slot" type="number" min="0" max="3" value="0"
+        /></label>
         <div class="button-row">
           <button id="add-skill-row" type="button">Add Skill Row</button>
           <button id="add-charm" type="button">Add Charm</button>
+          <button id="cancel-edit" type="button" hidden>Cancel edit</button>
         </div>
-        <p id="builder-status" class="muted"></p>
+        <p
+          id="builder-status"
+          class="muted"
+          role="status"
+          aria-live="polite"
+        ></p>
       </section>
 
       <section class="site-panel">
-        <h2 class="section-title"><span class="section-icon icon-data" aria-hidden="true"></span><span>Owned Charm Library</span></h2>
-        <p class="muted">Import, export, or edit your owned charm list that syncs with optimizer storage.</p>
+        <h2 class="section-title">
+          <span class="section-icon icon-data" aria-hidden="true"></span
+          ><span>Owned Charm Library</span>
+        </h2>
+        <p class="muted">
+          Import, export, or edit your owned charm list that syncs with
+          optimizer storage.
+        </p>
         <div class="button-row">
           <button id="export-json" type="button">Export JSON</button>
           <button id="copy-json" type="button">Copy JSON</button>
           <button id="import-json" type="button">Import JSON</button>
           <button id="clear-all" type="button" class="danger">Clear All</button>
+          <button id="restore-backup" type="button">
+            Restore previous inventory
+          </button>
         </div>
-        <textarea id="json-io" placeholder='[{"name":"WEX2 EE1","skills":{"57":2,"102":1},"slots":[2,1,0]}]'></textarea>
+        <label
+          >Import behavior<select id="import-mode">
+            <option value="merge">Merge with library</option>
+            <option value="replace">Replace (backup retained)</option>
+          </select></label
+        >
+        <textarea
+          id="json-io"
+          aria-label="Talisman inventory JSON"
+          placeholder='[{"name":"WEX2 EE1","skills":{"57":2,"102":1},"slots":[2,1,0],"weaponSlot":1}]'
+        ></textarea>
         <p id="library-summary" class="muted"></p>
         <div id="owned-list" class="owned-list"></div>
       </section>
       <p class="footer-note">MH Wilds Skill-First Gear Optimizer</p>
     </main>
-    <script defer src="/charm-builder/builder.js"></script>
+    <script type="module" src="/charm-builder/builder.js"></script>
   </body>
 </html>
-

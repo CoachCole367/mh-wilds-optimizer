@@ -1,0 +1,25 @@
+:root {
+  --font-body: Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --font-head: Cinzel, Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", Menlo, Consolas, monospace;
+  --bg: #0f1311;
+  --panel: #f4ecdb;
+  --panel2: #e6dbc2;
+  --text: #201e1a;
+  --muted: #514c43;
+  --border: #78664a;
+  --border2: #9b8761;
+  --green: #2f6b4f;
+  --ember: #945018;
+  --steel: #5f6670;
+  --danger: #a62e26;
+  --chipBg: #fbf5e8;
+  --chipBorder: #9b8765;
+  --radius: 13px;
+  --focusRing: #216647;
+  --vignette: rgba(0, 0, 0, 0.58);
+  --panelEdge: #fff6e6;
+  --panelInner: rgba(255, 249, 236, 0.62);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadowStrong: 0 24px 56px rgba(0, 0, 0, 0.46);
+}

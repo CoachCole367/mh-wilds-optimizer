@@ -1,451 +1,250 @@
-const STORAGE_KEY = "mh-wilds-optimizer:owned-charms:v1";
-const API_BASE_URL = "https://wilds.mhdb.io";
-
-const el = {
-  charmName: document.querySelector("#charm-name"),
-  charmRarity: document.querySelector("#charm-rarity"),
-  locale: document.querySelector("#locale"),
-  slot1: document.querySelector("#slot-1"),
-  slot2: document.querySelector("#slot-2"),
-  slot3: document.querySelector("#slot-3"),
-  skillRows: document.querySelector("#skill-rows"),
-  addSkillRow: document.querySelector("#add-skill-row"),
-  addCharm: document.querySelector("#add-charm"),
-  builderStatus: document.querySelector("#builder-status"),
-  exportJson: document.querySelector("#export-json"),
-  copyJson: document.querySelector("#copy-json"),
-  importJson: document.querySelector("#import-json"),
-  clearAll: document.querySelector("#clear-all"),
-  jsonIo: document.querySelector("#json-io"),
-  librarySummary: document.querySelector("#library-summary"),
-  ownedList: document.querySelector("#owned-list"),
-};
-
-const state = {
-  locale: "en",
-  skillOptions: [],
-  skillById: {},
-  ownedCharms: [],
-  nextRowId: 1,
-};
-
-function clampInt(value, fallback, min, max) {
-  const parsed = Number.parseInt(String(value), 10);
-  if (Number.isNaN(parsed)) {
-    return fallback;
-  }
-  return Math.max(min, Math.min(max, parsed));
-}
-
-function normalizeName(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function normalizeSlots(raw) {
-  if (!Array.isArray(raw) || raw.length !== 3) {
-    return null;
-  }
-  return [
-    clampInt(raw[0], 0, 0, 3),
-    clampInt(raw[1], 0, 0, 3),
-    clampInt(raw[2], 0, 0, 3),
-  ];
-}
-
-function buildSkillLookup() {
-  const byName = {};
-  for (const option of state.skillOptions) {
-    byName[normalizeName(option.name)] = option.id;
-  }
-  return byName;
-}
-
-function resolveSkillId(rawKey, skillNameLookup) {
-  const numeric = Number.parseInt(String(rawKey), 10);
-  if (Number.isFinite(numeric) && numeric > 0 && state.skillById[numeric]) {
-    return numeric;
-  }
-  const normalized = normalizeName(rawKey);
-  if (!normalized) {
-    return null;
-  }
-  return skillNameLookup[normalized] || null;
-}
-
-function normalizeOwnedCharmList(rawArray) {
-  const skillNameLookup = buildSkillLookup();
-  const output = [];
-  for (let i = 0; i < rawArray.length; i += 1) {
-    const entry = rawArray[i];
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const slots = normalizeSlots(entry.slots);
-    if (!slots) {
-      continue;
-    }
-    const normalizedSkills = {};
-    if (entry.skills && typeof entry.skills === "object") {
-      for (const [rawSkillKey, rawLevel] of Object.entries(entry.skills)) {
-        const skillId = resolveSkillId(rawSkillKey, skillNameLookup);
-        const level = clampInt(rawLevel, 0, 0, 99);
-        if (!skillId || level <= 0) {
-          continue;
-        }
-        normalizedSkills[String(skillId)] = level;
-      }
-    }
-    output.push({
-      name:
-        typeof entry.name === "string" && entry.name.trim()
-          ? entry.name.trim()
-          : `Owned Charm #${i + 1}`,
-      rarity: Number.isFinite(entry.rarity) ? entry.rarity : undefined,
-      skills: normalizedSkills,
-      slots,
-    });
-  }
-  return output;
-}
-
-function persistOwnedCharms() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.ownedCharms));
-}
-
-function readOwnedCharms() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return normalizeOwnedCharmList(parsed);
-  } catch {
-    return [];
-  }
-}
-
-function setStatus(text) {
-  el.builderStatus.textContent = text;
-}
-
-function skillSelectMarkup(selectedSkillId) {
-  const options = state.skillOptions
-    .map((skill) => {
-      const selected = selectedSkillId === skill.id ? " selected" : "";
-      return `<option value="${skill.id}"${selected}>${skill.name} (max ${skill.maxLevel})</option>`;
-    })
-    .join("");
-  return `<select class="skill-select">${options}</select>`;
-}
-
-function createSkillRow(selectedSkillId = null, level = 1) {
-  const rowId = `row-${state.nextRowId++}`;
-  const wrapper = document.createElement("div");
-  wrapper.className = "skill-row";
-  wrapper.dataset.rowId = rowId;
-  wrapper.innerHTML = `
-    <label>
-      <span>Skill</span>
-      ${skillSelectMarkup(selectedSkillId)}
-    </label>
-    <label>
-      <span>Level</span>
-      <input class="skill-level" type="number" min="1" max="99" value="${clampInt(level, 1, 1, 99)}" />
-    </label>
-    <button type="button" class="remove-skill-row">Remove</button>
-  `;
-  wrapper.querySelector(".remove-skill-row").addEventListener("click", () => {
-    wrapper.remove();
-  });
-  return wrapper;
-}
-
-function ensureAtLeastOneSkillRow() {
-  if (!el.skillRows.querySelector(".skill-row")) {
-    el.skillRows.append(createSkillRow());
-  }
-}
-
-function refreshSkillRowOptionsPreserveSelection() {
-  const rows = Array.from(el.skillRows.querySelectorAll(".skill-row"));
-  for (const row of rows) {
-    const select = row.querySelector(".skill-select");
-    const previous = Number.parseInt(select.value, 10);
-    select.innerHTML = state.skillOptions
-      .map((skill) => {
-        const selected = skill.id === previous ? " selected" : "";
-        return `<option value="${skill.id}"${selected}>${skill.name} (max ${skill.maxLevel})</option>`;
-      })
-      .join("");
-    if (!select.value && state.skillOptions.length > 0) {
-      select.value = String(state.skillOptions[0].id);
-    }
-  }
-  ensureAtLeastOneSkillRow();
-}
-
-function skillNameById(skillId) {
-  return state.skillById[skillId]?.name || `Skill #${skillId}`;
-}
-
-function renderOwnedList() {
-  if (state.ownedCharms.length === 0) {
-    el.ownedList.innerHTML = `<p class="muted">No owned charms saved yet.</p>`;
-  } else {
-    el.ownedList.innerHTML = state.ownedCharms
-      .map((charm, index) => {
-        const skillParts = Object.entries(charm.skills)
-          .map(([rawSkillId, level]) => {
-            const skillId = Number(rawSkillId);
-            return `${skillNameById(skillId)} +${level}`;
-          })
-          .join(", ");
-        const rarityText = Number.isFinite(charm.rarity) ? `R${charm.rarity}` : "Rarity ?";
-        return `<article class="owned-card">
-          <div class="owned-head">
-            <span class="owned-title">${charm.name}</span>
-            <span class="owned-meta">${rarityText} | Slots ${charm.slots.join("-")}</span>
-          </div>
-          <p class="owned-skills">${skillParts || "No skills (slot-only charm)."}</p>
-          <div class="owned-actions">
-            <button type="button" data-owned-action="edit" data-owned-index="${index}">Edit</button>
-            <button type="button" class="danger" data-owned-action="delete" data-owned-index="${index}">Delete</button>
-          </div>
-        </article>`;
-      })
-      .join("");
-  }
-
-  const jsonText = JSON.stringify(state.ownedCharms, null, 2);
-  if (document.activeElement !== el.jsonIo) {
-    el.jsonIo.value = jsonText;
-  }
-  el.librarySummary.textContent = `${state.ownedCharms.length} owned charms saved to optimizer storage.`;
-}
-
-function resetBuilderForm() {
-  el.charmName.value = "";
-  el.charmRarity.value = "";
-  el.slot1.value = "2";
-  el.slot2.value = "1";
-  el.slot3.value = "0";
-  el.skillRows.innerHTML = "";
-  el.skillRows.append(createSkillRow());
-}
-
-function addCharmFromForm() {
-  const slots = [
-    clampInt(el.slot1.value, 0, 0, 3),
-    clampInt(el.slot2.value, 0, 0, 3),
-    clampInt(el.slot3.value, 0, 0, 3),
-  ];
-  const name = el.charmName.value.trim() || `Owned Charm #${state.ownedCharms.length + 1}`;
-  const rarityRaw = el.charmRarity.value.trim();
-  const rarity = rarityRaw ? clampInt(rarityRaw, 1, 1, 10) : undefined;
-
-  const skills = {};
-  const rows = Array.from(el.skillRows.querySelectorAll(".skill-row"));
-  for (const row of rows) {
-    const select = row.querySelector(".skill-select");
-    const levelInput = row.querySelector(".skill-level");
-    const skillId = clampInt(select.value, 0, 0, Number.MAX_SAFE_INTEGER);
-    const maxLevel = state.skillById[skillId]?.maxLevel || 99;
-    const level = clampInt(levelInput.value, 1, 1, maxLevel);
-    if (!skillId || level <= 0) {
-      continue;
-    }
-    const key = String(skillId);
-    skills[key] = Math.max(level, skills[key] || 0);
-  }
-
-  state.ownedCharms.push({
-    name,
-    rarity,
-    skills,
-    slots,
-  });
-  persistOwnedCharms();
-  renderOwnedList();
-  resetBuilderForm();
-  setStatus(`Added ${name}.`);
-}
-
-async function fetchArmorSkills(locale) {
-  const projection = encodeURIComponent(
-    JSON.stringify({
-      id: true,
-      name: true,
-      kind: true,
-      "ranks.level": true,
-    }),
+import {
+  readInventory,
+  saveInventory,
+  normalizeInventory,
+  restoreInventory,
+  STORAGE_KEY,
+} from "../charm-inventory.js";
+const $ = (id) => document.getElementById(id);
+const esc = (text) =>
+  String(text).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
   );
-  const url = `${API_BASE_URL}/${locale}/skills?p=${projection}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load skills (${response.status})`);
-  }
-  const allSkills = await response.json();
-  const armorSkills = allSkills
-    .filter((skill) => String(skill.kind || "").toLowerCase() === "armor")
-    .map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      maxLevel: Array.isArray(skill.ranks) ? skill.ranks.reduce((max, rank) => Math.max(max, rank.level || 0), 0) : 7,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  state.skillOptions = armorSkills;
-  state.skillById = {};
-  for (const skill of armorSkills) {
-    state.skillById[skill.id] = skill;
-  }
+let inventory = readInventory(),
+  skills = [],
+  editing = null;
+function status(text) {
+  $("builder-status").textContent = text;
 }
-
-function importFromTextarea() {
+function options(id) {
+  const known = skills.some((s) => s.id === id);
+  return (
+    (!known && id
+      ? `<option value="${id}">Unknown skill #${id} (preserved)</option>`
+      : "") +
+    skills
+      .map(
+        (s) =>
+          `<option value="${s.id}" ${s.id === id ? "selected" : ""}>${esc(s.name)} (${esc(s.kind)}, max ${s.max})</option>`,
+      )
+      .join("")
+  );
+}
+function row(id, level = 1) {
+  const div = document.createElement("div");
+  div.className = "skill-row";
+  div.innerHTML = `<label>Skill<select class="skill-select">${options(id)}</select></label><label>Level<input class="skill-level" type="number" min="1" max="99" value="${level}"/></label><button type="button" class="remove-skill-row">Remove</button>`;
+  div.querySelector("button").onclick = () => div.remove();
+  $("skill-rows").append(div);
+}
+function reset() {
+  editing = null;
+  $("charm-name").value = "";
+  $("charm-rarity").value = "";
+  [1, 2, 3].forEach((i) => ($("slot-" + i).value = "0"));
+  $("weapon-slot").value = "0";
+  $("skill-rows").innerHTML = "";
+  row();
+  $("add-charm").textContent = "Add Talisman";
+  $("cancel-edit").hidden = true;
+}
+function render() {
+  $("owned-list").innerHTML =
+    inventory
+      .map(
+        (c, i) =>
+          `<article class="owned-card"><strong>${esc(c.name)}</strong><p>Armor slots: ${c.slots.join("-")} · weapon slot: ${c.weaponSlot ?? 0}</p><p>${
+            Object.entries(c.skills)
+              .map(
+                ([id, n]) =>
+                  `${esc(skills.find((s) => s.id === Number(id))?.name ?? `Skill #${id}`)} +${n}`,
+              )
+              .join(", ") || "Slot-only talisman"
+          }</p><button data-edit="${i}">Edit</button><button data-delete="${i}">Delete (backup retained)</button></article>`,
+      )
+      .join("") || "<p>No talismans saved yet.</p>";
+  $("library-summary").textContent =
+    `${inventory.length} talismans saved on this device. Weapon skills and slots are preserved.`;
+}
+function commit(next, message) {
+  if (!saveInventory(next)) {
+    status(
+      "Could not save: browser storage is unavailable or full. The previous library is preserved.",
+    );
+    return false;
+  }
+  inventory = next;
+  render();
+  status(message);
+  return true;
+}
+$("add-skill-row").onclick = () => row();
+$("cancel-edit").onclick = () => {
+  reset();
+  status("Edit cancelled. Original talisman was preserved.");
+};
+$("add-charm").onclick = () => {
   try {
-    const parsed = JSON.parse(el.jsonIo.value);
-    if (!Array.isArray(parsed)) {
-      throw new Error("JSON must be an array.");
+    const points = {};
+    for (const r of $("skill-rows").querySelectorAll(".skill-row")) {
+      const id = Number(r.querySelector("select").value),
+        n = Number(r.querySelector("input").value);
+      if (
+        !id ||
+        !Number.isInteger(n) ||
+        n < 1 ||
+        n > (skills.find((s) => s.id === id)?.max ?? 99)
+      )
+        throw Error("Choose a valid skill level.");
+      points[id] = Math.max(points[id] ?? 0, n);
     }
-    state.ownedCharms = normalizeOwnedCharmList(parsed);
-    persistOwnedCharms();
-    renderOwnedList();
-    setStatus(`Imported ${state.ownedCharms.length} charms.`);
-  } catch (error) {
-    setStatus(`Import failed: ${error instanceof Error ? error.message : "Invalid JSON"}`);
+    const original = editing === null ? {} : inventory[editing];
+    const charm = normalizeInventory(
+      [
+        {
+          ...original,
+          name:
+            $("charm-name").value || `Owned Talisman ${inventory.length + 1}`,
+          rarity: Number($("charm-rarity").value) || undefined,
+          skills: points,
+          slots: [1, 2, 3].map((i) => Number($("slot-" + i).value)),
+          weaponSlot: Number($("weapon-slot").value),
+        },
+      ],
+      skills,
+    )[0];
+    const next = inventory.slice();
+    if (editing === null) next.push(charm);
+    else next[editing] = charm;
+    if (commit(next, `Saved ${charm.name}.`)) reset();
+  } catch (e) {
+    status(e.message);
   }
-}
-
-function editOwnedCharm(index) {
-  const charm = state.ownedCharms[index];
-  if (!charm) {
+};
+$("owned-list").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.delete !== undefined) {
+    const i = Number(b.dataset.delete);
+    if (
+      commit(
+        inventory.filter((_, n) => n !== i),
+        "Talisman deleted. Restore previous inventory to undo.",
+      )
+    )
+      reset();
     return;
   }
-  state.ownedCharms.splice(index, 1);
-  persistOwnedCharms();
-  renderOwnedList();
-
-  el.charmName.value = charm.name;
-  el.charmRarity.value = Number.isFinite(charm.rarity) ? String(charm.rarity) : "";
-  el.slot1.value = String(charm.slots[0] || 0);
-  el.slot2.value = String(charm.slots[1] || 0);
-  el.slot3.value = String(charm.slots[2] || 0);
-
-  el.skillRows.innerHTML = "";
-  const skillEntries = Object.entries(charm.skills);
-  if (skillEntries.length === 0) {
-    el.skillRows.append(createSkillRow());
-  } else {
-    for (const [rawSkillId, level] of skillEntries) {
-      const skillId = Number.parseInt(rawSkillId, 10);
-      el.skillRows.append(createSkillRow(skillId, level));
-    }
-  }
-  setStatus(`Editing ${charm.name}. Save by clicking "Add Charm".`);
-}
-
-function wireEvents() {
-  el.addSkillRow.addEventListener("click", () => {
-    el.skillRows.append(createSkillRow());
-  });
-
-  el.addCharm.addEventListener("click", () => {
-    addCharmFromForm();
-  });
-
-  el.exportJson.addEventListener("click", () => {
-    el.jsonIo.value = JSON.stringify(state.ownedCharms, null, 2);
-    setStatus("Exported current owned charms to JSON.");
-  });
-
-  el.copyJson.addEventListener("click", async () => {
-    const text = JSON.stringify(state.ownedCharms, null, 2);
-    el.jsonIo.value = text;
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus("Copied owned charm JSON to clipboard.");
-    } catch {
-      setStatus("Could not access clipboard. JSON is shown in the text area.");
-    }
-  });
-
-  el.importJson.addEventListener("click", () => {
-    importFromTextarea();
-  });
-
-  el.clearAll.addEventListener("click", () => {
-    state.ownedCharms = [];
-    persistOwnedCharms();
-    renderOwnedList();
-    setStatus("Cleared all owned charms.");
-  });
-
-  el.ownedList.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-owned-action]");
-    if (!button) {
-      return;
-    }
-    const action = button.dataset.ownedAction;
-    const index = clampInt(button.dataset.ownedIndex, -1, -1, 99999);
-    if (index < 0) {
-      return;
-    }
-    if (action === "delete") {
-      const name = state.ownedCharms[index]?.name || `Charm #${index + 1}`;
-      state.ownedCharms.splice(index, 1);
-      persistOwnedCharms();
-      renderOwnedList();
-      setStatus(`Deleted ${name}.`);
-      return;
-    }
-    if (action === "edit") {
-      editOwnedCharm(index);
-    }
-  });
-
-  el.locale.addEventListener("change", async () => {
-    state.locale = el.locale.value;
-    setStatus("Loading armor skills for selected locale...");
-    try {
-      await fetchArmorSkills(state.locale);
-      refreshSkillRowOptionsPreserveSelection();
-      renderOwnedList();
-      setStatus(`Loaded ${state.skillOptions.length} armor skills for ${state.locale}.`);
-    } catch (error) {
-      setStatus(`Skill load failed: ${error instanceof Error ? error.message : "unknown error"}`);
-    }
-  });
-
-  window.addEventListener("storage", (event) => {
-    if (event.key !== STORAGE_KEY) {
-      return;
-    }
-    state.ownedCharms = readOwnedCharms();
-    renderOwnedList();
-    setStatus("Detected updates from another tab and reloaded owned charms.");
-  });
-}
-
-async function init() {
-  state.locale = "en";
-  el.locale.value = state.locale;
-  setStatus("Loading armor skills...");
+  if (b.dataset.edit === undefined) return;
+  editing = Number(b.dataset.edit);
+  const c = inventory[editing];
+  $("charm-name").value = c.name;
+  $("charm-rarity").value = c.rarity ?? "";
+  [1, 2, 3].forEach((i) => ($("slot-" + i).value = c.slots[i - 1]));
+  $("weapon-slot").value = c.weaponSlot ?? 0;
+  $("skill-rows").innerHTML = "";
+  Object.entries(c.skills).forEach(([id, n]) => row(Number(id), n));
+  $("add-charm").textContent = "Save Changes";
+  $("cancel-edit").hidden = false;
+  status(`Editing ${c.name}. Original remains saved until Save Changes.`);
+  $("charm-name").focus();
+};
+$("import-json").onclick = () => {
   try {
-    await fetchArmorSkills(state.locale);
-    el.skillRows.append(createSkillRow());
-    state.ownedCharms = readOwnedCharms();
-    renderOwnedList();
-    setStatus(`Ready. Loaded ${state.skillOptions.length} armor skills and ${state.ownedCharms.length} owned charms.`);
-  } catch (error) {
-    setStatus(`Initialization failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    const imported = normalizeInventory(JSON.parse($("json-io").value), skills);
+    const next =
+      $("import-mode").value === "merge"
+        ? [...inventory, ...imported]
+        : imported;
+    if (
+      commit(
+        next,
+        `Imported ${imported.length} talismans. Previous inventory backed up.`,
+      )
+    )
+      reset();
+  } catch (e) {
+    status(e.message);
+  }
+};
+$("export-json").onclick = () => {
+  const text = JSON.stringify(inventory, null, 2);
+  $("json-io").value = text;
+  const url = URL.createObjectURL(
+    new Blob([text], { type: "application/json" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "mh-wilds-talismans.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+$("copy-json").onclick = async () => {
+  const text = JSON.stringify(inventory, null, 2);
+  $("json-io").value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    status("Inventory JSON copied.");
+  } catch {
+    status("Clipboard unavailable; copy the JSON below.");
+  }
+};
+$("clear-all").onclick = () => {
+  if (commit([], "Library cleared. Restore previous inventory to undo."))
+    reset();
+};
+$("restore-backup").onclick = () => {
+  try {
+    inventory = restoreInventory();
+    render();
+    reset();
+    status("Previous library restored.");
+  } catch (e) {
+    status(e.message);
+  }
+};
+async function loadSkills() {
+  try {
+    status("Loading skills…");
+    const response = await fetch(
+      `https://wilds.mhdb.io/${$("locale").value}/skills`,
+      { signal: AbortSignal.timeout(15000) },
+    );
+    if (!response.ok) throw Error(`Skill load failed (${response.status})`);
+    skills = (await response.json())
+      .filter((s) => ["armor", "weapon"].includes(s.kind))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        max: Math.max(1, ...s.ranks.map((r) => r.level)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    render();
+    if (editing === null) reset();
+    status(
+      "Ready. Enter the talisman exactly as it appears in game. Legal roll combinations are not automatically verified.",
+    );
+  } catch (e) {
+    render();
+    status(
+      e.message +
+        ". Your inventory remains saved; retry by changing the language.",
+    );
   }
 }
-
-wireEvents();
-init().catch(() => undefined);
+$("locale").onchange = () => void loadSkills();
+window.addEventListener("storage", (event) => {
+  if (event.key === STORAGE_KEY) {
+    inventory = readInventory();
+    render();
+    reset();
+    status("Library updated in another tab.");
+  }
+});
+render();
+void loadSkills();

@@ -12,14 +12,18 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function mockInvalidPayloadFetch(version = "new-version"): ReturnType<typeof vi.fn> {
+function mockInvalidPayloadFetch(
+  version = "new-version",
+): ReturnType<typeof vi.fn> {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/version")) {
       return jsonResponse({ version });
     }
     if (url.includes("/skills")) {
-      return jsonResponse([{ id: "invalid-skill-id", name: "bad", kind: "armor" }]);
+      return jsonResponse([
+        { id: "invalid-skill-id", name: "bad", kind: "armor" },
+      ]);
     }
     if (url.includes("/armor/sets")) {
       return jsonResponse([]);
@@ -69,12 +73,15 @@ afterEach(() => {
 describe("mhdbApi payload validation handling", () => {
   it("throws a clear format-changed error when payload validation fails without cache", async () => {
     vi.stubGlobal("fetch", mockInvalidPayloadFetch());
-    await expect(loadOptimizerData("en", true)).rejects.toThrow("Data format changed upstream");
+    await expect(loadOptimizerData("en", true)).rejects.toThrow(
+      "Data format changed upstream",
+    );
   });
 
   it("falls back to cache when payload validation fails and cache exists", async () => {
-    const cacheKey = "mh-wilds-optimizer:v2:locale:en";
+    const cacheKey = "mh-wilds-optimizer:v3:locale:en";
     const cachedEnvelope = {
+      schemaVersion: 3,
       locale: "en",
       version: "old-version",
       fetchedAt: Date.now(),

@@ -9,7 +9,9 @@ export class PayloadValidationError extends Error {
   }
 }
 
-export function isPayloadValidationError(error: unknown): error is PayloadValidationError {
+export function isPayloadValidationError(
+  error: unknown,
+): error is PayloadValidationError {
   return error instanceof PayloadValidationError;
 }
 
@@ -24,7 +26,10 @@ function assert(condition: boolean, message: string): asserts condition {
 }
 
 function assertNumber(value: unknown, path: string): asserts value is number {
-  assert(typeof value === "number" && Number.isFinite(value), `${path} must be a finite number.`);
+  assert(
+    typeof value === "number" && Number.isFinite(value),
+    `${path} must be a finite number.`,
+  );
 }
 
 function assertString(value: unknown, path: string): asserts value is string {
@@ -38,22 +43,68 @@ function assertOptionalString(value: unknown, path: string): void {
   assertString(value, path);
 }
 
-function assertOptionalArray(value: unknown, path: string): asserts value is unknown[] {
+function assertOptionalArray(
+  value: unknown,
+  path: string,
+): asserts value is unknown[] {
   if (value === undefined || value === null) {
     return;
   }
   assert(Array.isArray(value), `${path} must be an array when provided.`);
 }
 
-export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPayload {
+export function validateRawWildsPayload(
+  raw: unknown,
+): asserts raw is RawWildsPayload {
   assert(isObject(raw), "Payload must be an object.");
 
   const payload = raw as UnknownRecord;
   assert(Array.isArray(payload.skills), "Payload.skills must be an array.");
   assert(Array.isArray(payload.armor), "Payload.armor must be an array.");
-  assert(Array.isArray(payload.armorSets), "Payload.armorSets must be an array.");
-  assert(Array.isArray(payload.decorations), "Payload.decorations must be an array.");
+  assert(
+    Array.isArray(payload.armorSets),
+    "Payload.armorSets must be an array.",
+  );
+  assert(
+    Array.isArray(payload.decorations),
+    "Payload.decorations must be an array.",
+  );
   assert(Array.isArray(payload.charms), "Payload.charms must be an array.");
+  const knownSkills = new Set(
+    payload.skills.map((s) => (isObject(s) ? s.id : undefined)),
+  );
+  function slots(value: unknown, path: string): void {
+    if (value == null) return;
+    assert(Array.isArray(value), `${path} must be an array.`);
+    assert(
+      value.length <= 3 &&
+        value.every((n) => Number.isInteger(n) && n >= 0 && n <= 4),
+      `${path} has invalid sizes.`,
+    );
+  }
+  function skillEntries(value: unknown, path: string): void {
+    if (value == null) return;
+    assert(Array.isArray(value), `${path} must be an array.`);
+    for (const entry of value) {
+      assert(
+        isObject(entry) && isObject(entry.skill),
+        `${path}: skill reference missing.`,
+      );
+      assert(knownSkills.has(entry.skill.id), `${path}: unknown skill ID.`);
+      assert(
+        typeof entry.level === "number" &&
+          Number.isInteger(entry.level) &&
+          entry.level > 0,
+        `${path}: invalid level.`,
+      );
+      if (entry.setPiecesRequired != null)
+        assert(
+          Number.isInteger(entry.setPiecesRequired) &&
+            Number(entry.setPiecesRequired) > 0,
+          `${path}: invalid threshold.`,
+        );
+    }
+  }
 
   for (let i = 0; i < payload.skills.length; i += 1) {
     const skill = payload.skills[i];
@@ -63,13 +114,23 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
     assertOptionalString(skill.description, `skills[${i}].description`);
     assertOptionalString(skill.kind, `skills[${i}].kind`);
     assertOptionalArray(skill.ranks, `skills[${i}].ranks`);
-    for (let rankIndex = 0; rankIndex < (skill.ranks ?? []).length; rankIndex += 1) {
+    for (
+      let rankIndex = 0;
+      rankIndex < (skill.ranks ?? []).length;
+      rankIndex += 1
+    ) {
       const rank = skill.ranks?.[rankIndex];
-      assert(isObject(rank), `skills[${i}].ranks[${rankIndex}] must be an object.`);
+      assert(
+        isObject(rank),
+        `skills[${i}].ranks[${rankIndex}] must be an object.`,
+      );
       if (rank.level !== undefined && rank.level !== null) {
         assertNumber(rank.level, `skills[${i}].ranks[${rankIndex}].level`);
       }
-      assertOptionalString(rank.description, `skills[${i}].ranks[${rankIndex}].description`);
+      assertOptionalString(
+        rank.description,
+        `skills[${i}].ranks[${rankIndex}].description`,
+      );
     }
   }
 
@@ -79,11 +140,38 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
     assertNumber(armor.id, `armor[${i}].id`);
     assertString(armor.name, `armor[${i}].name`);
     assertString(armor.kind, `armor[${i}].kind`);
+    if (armor.defense != null) {
+      assert(isObject(armor.defense), "Armor defense must be an object.");
+      for (const n of Object.values(armor.defense))
+        assert(
+          typeof n === "number" && Number.isFinite(n) && n >= 0,
+          "Invalid armor defense.",
+        );
+    }
+    if (armor.resistances != null) {
+      assert(
+        isObject(armor.resistances),
+        "Armor resistances must be an object.",
+      );
+      for (const n of Object.values(armor.resistances))
+        assert(
+          typeof n === "number" && Number.isFinite(n),
+          "Invalid armor resistance.",
+        );
+    }
+    slots(armor.slots, "Armor slots");
+    skillEntries(armor.skills, "Armor skills");
     if (armor.slots !== undefined && armor.slots !== null) {
-      assert(Array.isArray(armor.slots), `armor[${i}].slots must be an array when provided.`);
+      assert(
+        Array.isArray(armor.slots),
+        `armor[${i}].slots must be an array when provided.`,
+      );
     }
     if (armor.skills !== undefined && armor.skills !== null) {
-      assert(Array.isArray(armor.skills), `armor[${i}].skills must be an array when provided.`);
+      assert(
+        Array.isArray(armor.skills),
+        `armor[${i}].skills must be an array when provided.`,
+      );
     }
   }
 
@@ -92,6 +180,22 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
     assert(isObject(armorSet), `armorSets[${i}] must be an object.`);
     assertNumber(armorSet.id, `armorSets[${i}].id`);
     assertString(armorSet.name, `armorSets[${i}].name`);
+    for (const bonus of [armorSet.bonus, armorSet.groupBonus]) {
+      if (bonus == null) continue;
+      assert(
+        isObject(bonus) && Array.isArray(bonus.ranks),
+        "Invalid set/group bonus.",
+      );
+      for (const rank of bonus.ranks) {
+        assert(
+          isObject(rank) &&
+            Number.isInteger(rank.pieces) &&
+            Number(rank.pieces) > 0,
+          "Invalid bonus threshold.",
+        );
+        skillEntries([rank.skill], "Bonus skill");
+      }
+    }
   }
 
   for (let i = 0; i < payload.decorations.length; i += 1) {
@@ -99,11 +203,15 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
     assert(isObject(decoration), `decorations[${i}] must be an object.`);
     assertNumber(decoration.id, `decorations[${i}].id`);
     assertString(decoration.name, `decorations[${i}].name`);
+    skillEntries(decoration.skills, "Decoration skills");
     if (decoration.slot !== undefined && decoration.slot !== null) {
       assertNumber(decoration.slot, `decorations[${i}].slot`);
     }
     if (decoration.skills !== undefined && decoration.skills !== null) {
-      assert(Array.isArray(decoration.skills), `decorations[${i}].skills must be an array when provided.`);
+      assert(
+        Array.isArray(decoration.skills),
+        `decorations[${i}].skills must be an array when provided.`,
+      );
     }
   }
 
@@ -112,11 +220,20 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
     assert(isObject(charm), `charms[${i}] must be an object.`);
     assertNumber(charm.id, `charms[${i}].id`);
     assertOptionalArray(charm.ranks, `charms[${i}].ranks`);
-    for (let rankIndex = 0; rankIndex < (charm.ranks ?? []).length; rankIndex += 1) {
+    for (
+      let rankIndex = 0;
+      rankIndex < (charm.ranks ?? []).length;
+      rankIndex += 1
+    ) {
       const rank = charm.ranks?.[rankIndex];
-      assert(isObject(rank), `charms[${i}].ranks[${rankIndex}] must be an object.`);
+      assert(
+        isObject(rank),
+        `charms[${i}].ranks[${rankIndex}] must be an object.`,
+      );
       assertNumber(rank.id, `charms[${i}].ranks[${rankIndex}].id`);
       assertString(rank.name, `charms[${i}].ranks[${rankIndex}].name`);
+      slots(rank.slots, "Charm slots");
+      skillEntries(rank.skills, "Charm skills");
       if (rank.level !== undefined && rank.level !== null) {
         assertNumber(rank.level, `charms[${i}].ranks[${rankIndex}].level`);
       }
@@ -124,10 +241,16 @@ export function validateRawWildsPayload(raw: unknown): asserts raw is RawWildsPa
         assertNumber(rank.rarity, `charms[${i}].ranks[${rankIndex}].rarity`);
       }
       if (rank.slots !== undefined && rank.slots !== null) {
-        assert(Array.isArray(rank.slots), `charms[${i}].ranks[${rankIndex}].slots must be an array when provided.`);
+        assert(
+          Array.isArray(rank.slots),
+          `charms[${i}].ranks[${rankIndex}].slots must be an array when provided.`,
+        );
       }
       if (rank.skills !== undefined && rank.skills !== null) {
-        assert(Array.isArray(rank.skills), `charms[${i}].ranks[${rankIndex}].skills must be an array when provided.`);
+        assert(
+          Array.isArray(rank.skills),
+          `charms[${i}].ranks[${rankIndex}].skills must be an array when provided.`,
+        );
       }
     }
   }

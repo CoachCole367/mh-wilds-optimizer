@@ -1,16 +1,21 @@
-import type { BuildResult, Decoration, DesiredSkill, NormalizedData, SlotSize } from "./types";
+import { CANONICAL_SKILL_NAMES } from "./skillNames";
+import type {
+  BuildResult,
+  Decoration,
+  DesiredSkill,
+  NormalizedData,
+  SlotSize,
+} from "./types";
 
 export type FlexPreset = "comfort" | "balanced" | "damage";
 export type FlexPresetMode = FlexPreset | "auto";
 export type HuntElement = "fire" | "water" | "thunder" | "ice" | "dragon";
 export type HuntStatus = "poison" | "blast" | "paralysis" | "sleep" | "stun";
 
-export type HuntFocus =
-  | null
-  | {
-      element?: HuntElement;
-      status?: HuntStatus[];
-    };
+export type HuntFocus = null | {
+  element?: HuntElement;
+  status?: HuntStatus[];
+};
 
 export type LeftoverSlot = {
   slotIndex: number;
@@ -34,8 +39,20 @@ export type FlexSuggestion = {
   explanation: string;
 };
 
-export const HUNT_ELEMENT_OPTIONS: HuntElement[] = ["fire", "water", "thunder", "ice", "dragon"];
-export const HUNT_STATUS_OPTIONS: HuntStatus[] = ["poison", "blast", "paralysis", "sleep", "stun"];
+export const HUNT_ELEMENT_OPTIONS: HuntElement[] = [
+  "fire",
+  "water",
+  "thunder",
+  "ice",
+  "dragon",
+];
+export const HUNT_STATUS_OPTIONS: HuntStatus[] = [
+  "poison",
+  "blast",
+  "paralysis",
+  "sleep",
+  "stun",
+];
 
 type SuggestedEntry = {
   idsBySlot: number[];
@@ -78,7 +95,14 @@ const BRUTE_FORCE_MAX_COMBINATIONS = 220000;
 const BEAM_WIDTH = 220;
 const MAX_BEAM_CANDIDATES_PER_SLOT = 18;
 
-const MULTIPLAYER_PATTERNS = ["flinch free", "wide-range", "free meal", "speed eating", "mushroomancer", "brace"];
+const MULTIPLAYER_PATTERNS = [
+  "flinch free",
+  "wide-range",
+  "free meal",
+  "speed eating",
+  "mushroomancer",
+  "brace",
+];
 const SURVIVABILITY_PATTERNS = [
   "divine blessing",
   "defense",
@@ -165,7 +189,10 @@ function resolveElementUsageCaps(context: ScoreContext): ElementUsageCaps {
     caps[context.worstElement] = 2;
   }
   if (context.huntFocus?.element) {
-    caps[context.huntFocus.element] = Math.max(caps[context.huntFocus.element], 3);
+    caps[context.huntFocus.element] = Math.max(
+      caps[context.huntFocus.element],
+      3,
+    );
   }
   return caps;
 }
@@ -182,7 +209,11 @@ function buildElementTagsByDecorationId(
       if ((decoration.skills[skillId] ?? 0) <= 0) {
         continue;
       }
-      const skillName = lower(data.skillsById[skillId]?.name ?? "");
+      const skillName = lower(
+        data.locale === "en"
+          ? (data.skillsById[skillId]?.name ?? "")
+          : (CANONICAL_SKILL_NAMES[skillId] ?? ""),
+      );
       const tag = findElementResSkill(skillName);
       if (tag) {
         tags.add(tag);
@@ -226,14 +257,30 @@ function exceedsElementUsageCaps(
   return false;
 }
 
-function inferPresetFromDesiredSkills(desiredSkills: DesiredSkill[], data: NormalizedData): FlexPreset {
+function inferPresetFromDesiredSkills(
+  desiredSkills: DesiredSkill[],
+  data: NormalizedData,
+): FlexPreset {
   const desiredNames = desiredSkills
-    .map((desired) => lower(data.skillsById[desired.skillId]?.name ?? ""))
+    .map((desired) =>
+      lower(
+        data.locale === "en"
+          ? (data.skillsById[desired.skillId]?.name ?? "")
+          : (CANONICAL_SKILL_NAMES[desired.skillId] ?? ""),
+      ),
+    )
     .filter((name) => name.length > 0);
 
-  const hasConstitutionLike = desiredNames.some((name) => name.includes("constitution") || name.includes("stamina surge"));
-  const hasBalancedDamage = desiredNames.some((name) => name.includes("weakness exploit") || name.includes("burst"));
-  const hasComfort = desiredNames.some((name) => name.includes("divine blessing") || name.includes("stun resistance"));
+  const hasConstitutionLike = desiredNames.some(
+    (name) => name.includes("constitution") || name.includes("stamina surge"),
+  );
+  const hasBalancedDamage = desiredNames.some(
+    (name) => name.includes("weakness exploit") || name.includes("burst"),
+  );
+  const hasComfort = desiredNames.some(
+    (name) =>
+      name.includes("divine blessing") || name.includes("stun resistance"),
+  );
 
   if (hasConstitutionLike) return "damage";
   if (hasBalancedDamage) return "balanced";
@@ -241,7 +288,11 @@ function inferPresetFromDesiredSkills(desiredSkills: DesiredSkill[], data: Norma
   return "balanced";
 }
 
-function resolvePreset(mode: FlexPresetMode, desiredSkills: DesiredSkill[], data: NormalizedData): FlexPreset {
+function resolvePreset(
+  mode: FlexPresetMode,
+  desiredSkills: DesiredSkill[],
+  data: NormalizedData,
+): FlexPreset {
   if (mode !== "auto") {
     return mode;
   }
@@ -276,7 +327,10 @@ function getPresetWeights(preset: FlexPreset): PresetWeights {
   };
 }
 
-function getWorstElementResist(build: BuildResult): { element: HuntElement | null; value: number } {
+function getWorstElementResist(build: BuildResult): {
+  element: HuntElement | null;
+  value: number;
+} {
   const values: Array<{ element: HuntElement; value: number }> = [
     { element: "fire", value: build.resist.fire },
     { element: "water", value: build.resist.water },
@@ -335,13 +389,20 @@ function scoreDecorationSignal(
       continue;
     }
 
-    const skillNameLower = lower(context.data.skillsById[skillId]?.name ?? "");
+    const skillNameLower = lower(
+      context.data.locale === "en"
+        ? (context.data.skillsById[skillId]?.name ?? "")
+        : (CANONICAL_SKILL_NAMES[skillId] ?? ""),
+    );
     const elementMatch = findElementResSkill(skillNameLower);
     if (elementMatch) {
       if (context.worstElement && elementMatch === context.worstElement) {
         signal.matchedWorstElement = true;
       }
-      if (context.huntFocus?.element && elementMatch === context.huntFocus.element) {
+      if (
+        context.huntFocus?.element &&
+        elementMatch === context.huntFocus.element
+      ) {
         signal.matchedHuntElement = elementMatch;
       }
       signal.survivabilityHits += effectiveGain;
@@ -401,11 +462,16 @@ function explainSuggestion(
   const lines: string[] = [];
 
   if (signalTotals.matchedWorstElement && context.worstElement) {
-    const elementName = context.worstElement[0].toUpperCase() + context.worstElement.slice(1);
-    lines.push(`Patches low ${elementName} resistance (${context.worstElementValue}).`);
+    const elementName =
+      context.worstElement[0].toUpperCase() + context.worstElement.slice(1);
+    lines.push(
+      `Patches low ${elementName} resistance (${context.worstElementValue}).`,
+    );
   }
   if (signalTotals.matchedHuntElement) {
-    const elementName = signalTotals.matchedHuntElement[0].toUpperCase() + signalTotals.matchedHuntElement.slice(1);
+    const elementName =
+      signalTotals.matchedHuntElement[0].toUpperCase() +
+      signalTotals.matchedHuntElement.slice(1);
     lines.push(`Matches hunt focus with extra ${elementName} resistance.`);
   }
   if (signalTotals.matchedHuntStatuses.size > 0) {
@@ -413,10 +479,19 @@ function explainSuggestion(
     lines.push(`Adds hunt-specific status coverage: ${statusText}.`);
   }
 
-  if (lines.length < 2 && signalTotals.damageHits > 0 && context.preset === "damage") {
-    lines.push("Adds extra damage-oriented value without changing required skills.");
+  if (
+    lines.length < 2 &&
+    signalTotals.damageHits > 0 &&
+    context.preset === "damage"
+  ) {
+    lines.push(
+      "Adds extra damage-oriented value without changing required skills.",
+    );
   }
-  if (lines.length < 2 && signalTotals.survivabilityHits + signalTotals.utilityHits > 0) {
+  if (
+    lines.length < 2 &&
+    signalTotals.survivabilityHits + signalTotals.utilityHits > 0
+  ) {
     lines.push("Improves general comfort and survivability in leftover slots.");
   }
   if (lines.length < 2 && signalTotals.multiplayerHits > 0) {
@@ -436,7 +511,9 @@ function scoreAssignment(
   elementUsageCaps: ElementUsageCaps,
   elementTagsByDecorationId: Record<number, HuntElement[]>,
 ): { score: number; explanation: string } {
-  const runningSkillTotals: Record<number, number> = { ...context.build.skillTotals };
+  const runningSkillTotals: Record<number, number> = {
+    ...context.build.skillTotals,
+  };
   let score = 0;
   let totalWasted = 0;
   let matchedWorstElement = false;
@@ -476,7 +553,11 @@ function scoreAssignment(
       }
     }
 
-    const signal = scoreDecorationSignal(decoration, runningSkillTotals, context);
+    const signal = scoreDecorationSignal(
+      decoration,
+      runningSkillTotals,
+      context,
+    );
     score += signal.score;
     totalWasted += signal.wastedPoints;
     matchedWorstElement = matchedWorstElement || signal.matchedWorstElement;
@@ -522,7 +603,11 @@ function quickSingleDecorationScore(
   decoration: Decoration,
   context: ScoreContext,
 ): number {
-  const score = scoreDecorationSignal(decoration, { ...context.build.skillTotals }, context).score;
+  const score = scoreDecorationSignal(
+    decoration,
+    { ...context.build.skillTotals },
+    context,
+  ).score;
   return score;
 }
 
@@ -553,14 +638,19 @@ function enumerateByBeam(
   elementUsageCaps: ElementUsageCaps,
   elementTagsByDecorationId: Record<number, HuntElement[]>,
 ): number[][] {
-  let states: Array<{ idsBySlot: number[]; score: number }> = [{ idsBySlot: [], score: 0 }];
+  let states: Array<{ idsBySlot: number[]; score: number }> = [
+    { idsBySlot: [], score: 0 },
+  ];
 
   for (let depth = 0; depth < candidatesBySlot.length; depth += 1) {
     const nextStates: Array<{ idsBySlot: number[]; score: number }> = [];
     const candidates = candidatesBySlot[depth];
     for (const state of states) {
       for (const deco of candidates) {
-        const duplicateCount = state.idsBySlot.reduce((count, decoId) => count + (decoId === deco.id ? 1 : 0), 0);
+        const duplicateCount = state.idsBySlot.reduce(
+          (count, decoId) => count + (decoId === deco.id ? 1 : 0),
+          0,
+        );
         const duplicatePenalty = duplicateCount * 4;
 
         let elementOverflowPenalty = 0;
@@ -579,11 +669,17 @@ function enumerateByBeam(
 
         nextStates.push({
           idsBySlot: [...state.idsBySlot, deco.id],
-          score: state.score + (quickScoreById[deco.id] ?? 0) - duplicatePenalty - elementOverflowPenalty,
+          score:
+            state.score +
+            (quickScoreById[deco.id] ?? 0) -
+            duplicatePenalty -
+            elementOverflowPenalty,
         });
       }
     }
-    nextStates.sort((a, b) => b.score - a.score || a.idsBySlot.length - b.idsBySlot.length);
+    nextStates.sort(
+      (a, b) => b.score - a.score || a.idsBySlot.length - b.idsBySlot.length,
+    );
     states = nextStates.slice(0, BEAM_WIDTH);
     if (states.length === 0) {
       break;
@@ -602,7 +698,8 @@ function buildDecorationLoadout(
   for (let i = 0; i < idsBySlot.length; i += 1) {
     const decoId = idsBySlot[i];
     const slot = slotPlan[i];
-    const decoName = data.decorationsById[decoId]?.name || `Decoration #${decoId}`;
+    const decoName =
+      data.decorationsById[decoId]?.name || `Decoration #${decoId}`;
     output.push({
       slotIndex: slot.slotIndex,
       slotLevel: slot.slotLevel,
@@ -623,12 +720,17 @@ export function suggestFlexDecorations(input: {
   presetMode: FlexPresetMode;
   huntFocus: HuntFocus;
   allowedDecorationIds: Set<number> | null;
+  decorationCounts?: Record<number, number>;
 }): FlexSuggestion[] {
   if (input.leftoverSlots.length === 0) {
     return [];
   }
 
-  const preset = resolvePreset(input.presetMode, input.desiredSkills, input.data);
+  const preset = resolvePreset(
+    input.presetMode,
+    input.desiredSkills,
+    input.data,
+  );
   const worst = getWorstElementResist(input.build);
   const context: ScoreContext = {
     data: input.data,
@@ -642,24 +744,34 @@ export function suggestFlexDecorations(input: {
 
   const allArmorDecorations = input.data.decorations.filter((deco) => {
     if (lower(deco.kind) !== "armor") return false;
-    if (input.allowedDecorationIds && !input.allowedDecorationIds.has(deco.id)) return false;
+    if (input.allowedDecorationIds && !input.allowedDecorationIds.has(deco.id))
+      return false;
     return true;
   });
   if (allArmorDecorations.length === 0) {
     return [];
   }
-  const elementTagsByDecorationId = buildElementTagsByDecorationId(allArmorDecorations, input.data);
+  const elementTagsByDecorationId = buildElementTagsByDecorationId(
+    allArmorDecorations,
+    input.data,
+  );
 
   const quickScoreById: Record<number, number> = {};
   for (const deco of allArmorDecorations) {
     quickScoreById[deco.id] = quickSingleDecorationScore(deco, context);
   }
 
-  const sortedSlots = [...input.leftoverSlots].sort((a, b) => b.slotLevel - a.slotLevel || a.slotIndex - b.slotIndex);
+  const sortedSlots = [...input.leftoverSlots].sort(
+    (a, b) => b.slotLevel - a.slotLevel || a.slotIndex - b.slotIndex,
+  );
   const fullCandidatesBySlot = sortedSlots.map((slot) =>
     allArmorDecorations
       .filter((deco) => slot.slotLevel >= deco.slotReq)
-      .sort((a, b) => (quickScoreById[b.id] ?? 0) - (quickScoreById[a.id] ?? 0) || a.id - b.id),
+      .sort(
+        (a, b) =>
+          (quickScoreById[b.id] ?? 0) - (quickScoreById[a.id] ?? 0) ||
+          a.id - b.id,
+      ),
   );
   if (fullCandidatesBySlot.some((candidates) => candidates.length === 0)) {
     return [];
@@ -671,16 +783,34 @@ export function suggestFlexDecorations(input: {
     if (estimatedCombinations > BRUTE_FORCE_MAX_COMBINATIONS) break;
   }
 
-  const useBruteforce = sortedSlots.length <= 4 && estimatedCombinations <= BRUTE_FORCE_MAX_COMBINATIONS;
+  const useBruteforce =
+    sortedSlots.length <= 4 &&
+    estimatedCombinations <= BRUTE_FORCE_MAX_COMBINATIONS;
   const candidatesBySlot = useBruteforce
     ? fullCandidatesBySlot
-    : fullCandidatesBySlot.map((candidates) => candidates.slice(0, MAX_BEAM_CANDIDATES_PER_SLOT));
+    : fullCandidatesBySlot.map((candidates) =>
+        candidates.slice(0, MAX_BEAM_CANDIDATES_PER_SLOT),
+      );
 
   const topEntries: SuggestedEntry[] = [];
   const seen = new Set<string>();
 
   function consider(idsBySlot: number[]): void {
-    if (exceedsElementUsageCaps(idsBySlot, elementUsageCaps, elementTagsByDecorationId)) {
+    if (input.decorationCounts) {
+      const used: Record<number, number> = {};
+      for (const id of idsBySlot) {
+        if (!id) continue;
+        used[id] = (used[id] ?? 0) + 1;
+        if (used[id] > (input.decorationCounts[id] ?? 0)) return;
+      }
+    }
+    if (
+      exceedsElementUsageCaps(
+        idsBySlot,
+        elementUsageCaps,
+        elementTagsByDecorationId,
+      )
+    ) {
       return;
     }
 
@@ -693,7 +823,13 @@ export function suggestFlexDecorations(input: {
     }
     seen.add(key);
 
-    const scored = scoreAssignment(idsBySlot, sortedSlots, context, elementUsageCaps, elementTagsByDecorationId);
+    const scored = scoreAssignment(
+      idsBySlot,
+      sortedSlots,
+      context,
+      elementUsageCaps,
+      elementTagsByDecorationId,
+    );
     const entry: SuggestedEntry = {
       idsBySlot,
       score: scored.score,
@@ -701,7 +837,11 @@ export function suggestFlexDecorations(input: {
     };
 
     topEntries.push(entry);
-    topEntries.sort((a, b) => b.score - a.score || a.idsBySlot.join(",").localeCompare(b.idsBySlot.join(",")));
+    topEntries.sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.idsBySlot.join(",").localeCompare(b.idsBySlot.join(",")),
+    );
     if (topEntries.length > 18) {
       topEntries.length = 18;
     }
@@ -722,7 +862,11 @@ export function suggestFlexDecorations(input: {
   }
 
   return topEntries.slice(0, 3).map((entry) => ({
-    decorationLoadout: buildDecorationLoadout(entry.idsBySlot, sortedSlots, input.data),
+    decorationLoadout: buildDecorationLoadout(
+      entry.idsBySlot,
+      sortedSlots,
+      input.data,
+    ),
     score: Math.round(entry.score * 10) / 10,
     explanation: entry.explanation,
   }));

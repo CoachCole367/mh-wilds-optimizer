@@ -1,2776 +1,1273 @@
+import { interfaceMarkup } from "./interfaceMarkup";
 import "./style.css";
-import { clearCachedLocale, loadOptimizerData } from "./mhdbApi";
-import { compareBuildResults } from "./optimizer";
-import { escapeAttr, escapeText, safeJoin } from "./html";
-import {
-  DEFAULT_CHARM_SLOT_PATTERNS,
-  DEFAULT_CHARM_SUGGESTION_OPTIONS,
-  buildDefaultSkillWeights,
-  suggestCharmsForBuild,
-} from "./charmSuggestions";
+import { loadOptimizerData } from "./mhdbApi";
+import { escapeAttr as attr, escapeText as esc } from "./html";
 import { decodeShareStateV2, encodeShareStateV2 } from "./shareState";
+import { startSearch } from "./searchCoordinator";
 import {
-  HUNT_ELEMENT_OPTIONS,
-  HUNT_STATUS_OPTIONS,
+  readInventory,
+  saveInventory,
+  normalizeInventory,
+  restoreInventory,
+  STORAGE_KEY,
+} from "../public/charm-inventory.js";
+import {
+  readSavedBuilds,
+  isSavedBuild,
+  writeSavedBuilds,
+  downloadText,
+  buildChecklist,
+  type SavedBuild,
+} from "./buildStorage";
+import {
   suggestFlexDecorations,
-  type FlexPresetMode,
-  type HuntElement,
-  type HuntFocus,
-  type HuntStatus,
   type LeftoverSlot,
+  type FlexPresetMode,
 } from "./flexSuggestions";
-import {
-  AUTO_WEAPON_SET_BONUS_SET_ID,
-  resolveWeaponSetBonusPiecesForRequest,
-} from "./weaponSetBonus";
+import { suggestCharmsForBuild } from "./charmSuggestions";
 import type {
-  ArmorPiece,
+  ArmorKind,
   BuildResult,
   Charm,
+  CharmRank,
   DesiredSkill,
-  LoadDataSource,
   NormalizedData,
-  OptimizeWorkerDone,
-  OptimizeWorkerMessage,
-  OptimizeWorkerProgress,
   OptimizeWorkerRequest,
-  CharmMode,
-  CharmSuggestion,
-  SkillPoints,
   SlotSize,
-  WorkerStats,
+  SkillPoints,
 } from "./types";
 
-const LOCALES = ["en", "ja", "ko", "fr", "de", "es", "it", "pl", "pt-BR", "ru", "zh-Hans", "zh-Hant", "ar"];
-const AVAILABLE_THREADS = Math.max(1, navigator.hardwareConcurrency || 4);
-const MAX_THREADS = AVAILABLE_THREADS;
-const MAX_RESULTS = 100;
-const MAX_POST_PROCESS_RESULTS = 120;
-const DEFAULT_THREADS = Math.max(1, Math.min(MAX_THREADS, Math.round(AVAILABLE_THREADS * 0.8)));
-const DEFAULT_RESULTS = 25;
-const DEFAULT_NEAR_MISS_MAX_MISSING_POINTS = 2;
-const OWNED_CHARMS_STORAGE_KEY = "mh-wilds-optimizer:owned-charms:v1";
-const PROGRESS_RENDER_INTERVAL_MS = 90;
-
-type SkillKindFilter = "all" | "armor" | "set" | "group";
-
-type State = {
-  locale: string;
-  data: NormalizedData | null;
-  dataSource: LoadDataSource | null;
-  loading: boolean;
-  dataError: string;
-  desired: DesiredSkill[];
-  allowAlpha: boolean;
-  allowGamma: boolean;
-  useAllDecos: boolean;
-  selectedDecos: Set<number>;
-  threads: number;
-  resultsPerThread: number;
-  optimizing: boolean;
-  runStatus: string;
-  rawResults: BuildResult[];
-  results: BuildResult[];
-  workerStats: WorkerStats[];
-  workerProgressByIndex: Record<number, OptimizeWorkerProgress>;
-  expectedWorkers: number;
-  activeWorkerCancels: Array<() => void>;
-  cancelRequested: boolean;
-  skillSearch: string;
-  skillKindFilter: SkillKindFilter;
-  decoSearch: string;
-  charmMode: CharmMode;
-  charmSuggestCount: number;
-  charmMaxSuggestedSkills: number;
-  charmMaxSkillLevelPerSkill: number;
-  charmSlotPatternsText: string;
-  charmSlotPatterns: Array<[number, number, number]>;
-  nearMissEnabled: boolean;
-  nearMissMaxMissingPoints: number;
-  minCharmScoreToShow: number;
-  hideSuggestionsIfNoDeficits: boolean;
-  showComfortCharmWhenNoDeficits: boolean;
-  filterShowMeetsBase: boolean;
-  filterShowMeetsWithBestCharm: boolean;
-  filterHideHighCharmDependence: boolean;
-  previewCharmByResultKey: Record<string, string | null>;
-  expandedCharmSuggestionsByResultKey: Record<string, boolean>;
-  ownedCharms: Charm[];
-  flexPresetMode: FlexPresetMode;
-  huntElement: HuntElement | "";
-  huntStatuses: Set<HuntStatus>;
-  allowWeaponSetBonusRoll: boolean;
+const KINDS: ArmorKind[] = ["head", "chest", "arms", "waist", "legs"];
+const LOCALES = [
+  "en",
+  "ja",
+  "ko",
+  "fr",
+  "de",
+  "es",
+  "it",
+  "pl",
+  "pt-BR",
+  "ru",
+  "zh-Hans",
+  "zh-Hant",
+  "ar",
+];
+const SETTINGS_KEY = "mh-wilds-optimizer:settings:v3";
+const ALIASES: Record<number, string> = {
+  57: "wex weakness exploit",
+  102: "ee evade extender",
+  22: "cb critical boost",
+  3: "ce critical eye",
+  144: "agi agitator",
+  14: "con constitution",
+  105: "sr stun resistance",
+  122: "db divine blessing",
 };
+const root = document.querySelector<HTMLDivElement>("#app")!;
+root.innerHTML = interfaceMarkup(LOCALES);
 
-const root = document.querySelector<HTMLDivElement>("#app");
-if (!root) throw new Error("Missing #app.");
-
-root.innerHTML = `
-<div class="shell">
-  <header class="hero">
-    <p class="kicker">MHWilds Optimizer</p>
-    <h1>Skill-First Gear Optimizer</h1>
-    <nav class="info-links" aria-label="Site pages">
-      <a class="info-link active" href="/">Optimizer</a>
-      <a class="info-link" href="/about/index.html">About</a>
-      <a class="info-link" href="/faq/index.html">FAQ</a>
-      <a class="info-link" href="/charm-builder/index.html">Owned Charm Builder</a>
-    </nav>
-  </header>
-
-  <section class="panel">
-    <div class="panel-title-row"><h2 class="section-title section-title-data"><span class="icon icon-data" aria-hidden="true"></span><span>Data</span></h2><button id="refresh-data" type="button">Refresh Data</button></div>
-    <div class="inline-grid">
-      <label class="field"><span>Locale</span><select id="locale"></select></label>
-      <p id="data-status" class="status-line"></p>
-    </div>
-  </section>
-
-  <section class="panel split">
-    <div class="pane">
-      <h2 class="section-title section-title-skills"><span class="icon icon-skills" aria-hidden="true"></span><span>Desired Skills</span></h2>
-      <div class="inline-grid">
-        <label class="field"><span>Search</span><input id="skill-search" type="search" placeholder="Skill name"/></label>
-        <label class="field"><span>Type</span>
-          <select id="skill-kind-filter">
-            <option value="all">All (except weapon)</option>
-            <option value="armor">Armor</option>
-            <option value="set">Set Bonus</option>
-            <option value="group">Group Bonus</option>
-          </select>
-        </label>
-      </div>
-      <select id="skill-list" size="9"></select>
-      <p class="muted">Set and Group skills (including Gogmapocalypse) are selectable here.</p>
-      <div class="button-row"><button id="add-skill" type="button">Add Skill</button></div>
-      <div id="desired-list"></div>
-    </div>
-    <div class="pane">
-      <h2 class="section-title section-title-deco"><span class="icon icon-decorations" aria-hidden="true"></span><span>Decoration Pool</span></h2>
-      <label class="field"><span>Search</span><input id="deco-search" type="search" placeholder="Decoration name"/></label>
-      <div class="button-row"><button id="deco-all" type="button">Select All</button><button id="deco-none" type="button">Clear All</button></div>
-      <select id="deco-list" multiple size="10"></select>
-      <p id="deco-summary" class="muted"></p>
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2 class="section-title section-title-controls" title="Core optimizer settings. Use optional sections below for advanced tuning."><span class="icon icon-controls" aria-hidden="true"></span><span>Controls</span></h2>
-    <details class="quickstart-card quickstart-collapsible" aria-label="Preset settings">
-      <summary class="quickstart-title" title="Show one-click beginner and advanced presets."><span class="icon icon-controls" aria-hidden="true"></span><span>Preset Profiles</span></summary>
-      <div class="quickstart-body">
-        <p class="muted">Pick a preset path. Beginner profiles are low-noise defaults; advanced profiles open deeper solver behavior.</p>
-        <div class="quickstart-groups">
-          <section class="quickstart-group">
-            <p class="quickstart-group-title">Beginner Presets</p>
-            <div class="quickstart-grid">
-              <article class="quickstart-preset">
-                <p class="quickstart-name">Starter Realistic</p>
-                <p class="muted">Craftable baseline with no theoretical charm completion.</p>
-                <ul class="quickstart-list">
-                  <li>Charm Mode: Off</li>
-                  <li>Near-Miss Solver: Off</li>
-                  <li>Allow alpha/gamma armor: On</li>
-                  <li>Decoration Pool: All</li>
-                </ul>
-                <button id="apply-beginner-realistic" type="button">Apply Starter Realistic</button>
-              </article>
-              <article class="quickstart-preset">
-                <p class="quickstart-name">Starter With Guidance</p>
-                <p class="muted">Guided theorycraft with near-miss + suggestion filters enabled.</p>
-                <ul class="quickstart-list">
-                  <li>Charm Mode: Suggest After</li>
-                  <li>Near-Miss Solver: On (2 max missing)</li>
-                  <li>Show base + with-best-charm: On</li>
-                  <li>Hide HIGH charm dependence: On</li>
-                </ul>
-                <button id="apply-beginner-guidance" type="button">Apply Starter With Guidance</button>
-              </article>
-            </div>
-          </section>
-          <section class="quickstart-group">
-            <p class="quickstart-group-title">Advanced Presets</p>
-            <div class="quickstart-grid">
-              <article class="quickstart-preset">
-                <p class="quickstart-name">RNG Theorycraft</p>
-                <p class="muted">Wider search for high-ceiling theoretical sets and completion paths.</p>
-                <ul class="quickstart-list">
-                  <li>Charm Mode: Suggest After</li>
-                  <li>Near-Miss Solver: On (5 max missing)</li>
-                  <li>Show base + with-best-charm: On</li>
-                  <li>Hide HIGH charm dependence: Off</li>
-                </ul>
-                <button id="apply-advanced-theorycraft" type="button">Apply RNG Theorycraft</button>
-              </article>
-              <article class="quickstart-preset">
-                <p class="quickstart-name">Owned Validation</p>
-                <p class="muted">Realistic validation against your imported charm library.</p>
-                <ul class="quickstart-list">
-                  <li>Charm Mode: Owned</li>
-                  <li>Near-Miss Solver: On (3 max missing)</li>
-                  <li>Show base + with-best-charm: On</li>
-                  <li>Owned charms required for best value</li>
-                </ul>
-                <button id="apply-advanced-owned" type="button">Apply Owned Validation</button>
-              </article>
-            </div>
-          </section>
-        </div>
-      </div>
-    </details>
-    <details class="advanced-controls">
-      <summary title="Show all optimizer settings and optional tuning panels.">Advanced Settings</summary>
-      <p class="muted advanced-summary">Expand for full control over solver, charm filters, owned charms, and flex tuning.</p>
-      <div class="advanced-controls-body">
-    <div class="controls-main">
-      <label class="checkbox-line" title="Include alpha armor pieces in the search pool."><input id="allow-alpha" type="checkbox"/><span>Allow &alpha; armor</span></label>
-      <label class="checkbox-line" title="Include gamma armor pieces in the search pool."><input id="allow-gamma" type="checkbox"/><span>Allow &gamma; armor</span></label>
-      <label class="field"><span title="How many worker threads to use. Higher is faster, but uses more CPU.">Max Threads</span><input id="threads" type="number" min="1" max="${MAX_THREADS}" title="How many worker threads to use. Higher is faster, but uses more CPU."/></label>
-      <label class="field"><span title="How many candidate builds each worker may keep before merge and re-rank.">Max Results Per Thread</span><input id="results-per-thread" type="number" min="1" max="100" title="How many candidate builds each worker may keep before merge and re-rank."/></label>
-      <label class="field"><span title="Off: no charm post-processing. Suggest After: theoretical RNG templates. Owned: uses your saved charm list.">Charm Mode</span>
-        <select id="charm-mode">
-          <option value="off">Off</option>
-          <option value="suggest">Suggest After</option>
-          <option value="owned">Owned (v2 stub)</option>
-        </select>
-      </label>
-      <label class="checkbox-line" title="When enabled, optimizer may use an inferred Artian weapon set-bonus roll (+1 set piece) for requested set/group targets.">
-        <input id="allow-weapon-set-bonus-roll" type="checkbox"/>
-        <span>Allow Artian weapon set-bonus roll (auto)</span>
-      </label>
-    </div>
-    <div class="controls-optional">
-      <details class="optional-block">
-        <summary title="Tune how theoretical RNG charm suggestions are generated and displayed.">Charm Suggestion Tuning (Optional)</summary>
-        <div class="inline-grid optional-grid">
-          <label class="field"><span title="Number of templates shown in each result card.">Charm Suggest Count</span><input id="charm-suggest-count" type="number" min="1" max="20"/></label>
-          <label class="field"><span title="Only the top missing skills are used to generate templates.">Max Suggested Skills</span><input id="charm-max-skills" type="number" min="1" max="12"/></label>
-          <label class="field"><span title="Cap per skill in a single suggested charm template.">Max Skill Lvl / Charm Skill</span><input id="charm-skill-cap" type="number" min="1" max="7"/></label>
-          <label class="field"><span title="Allowed slot patterns for theoretical RNG charm templates.">Charm Slot Patterns</span><input id="charm-slot-patterns" type="text" placeholder="3-0-0,2-1-0,2-0-0,1-1-0,1-0-0,0-0-0"/></label>
-          <label class="field"><span title="Hide charm rows that provide very low value.">Min Charm Score To Show</span><input id="charm-min-score" type="number" min="0" step="0.1"/></label>
-          <label class="checkbox-line" title="If a build already meets all targets, hide the charm requirement section."><input id="charm-hide-no-deficit" type="checkbox"/><span>Hide when no target deficits</span></label>
-          <label class="checkbox-line" title="When a build already meets targets, still suggest slot-focused charms."><input id="charm-show-comfort" type="checkbox"/><span>Show comfort charms when no deficits</span></label>
-        </div>
-      </details>
-
-      <details class="optional-block">
-        <summary title="Filter which results are shown based on charm completion and dependence.">Charm Filters (Optional)</summary>
-        <div class="inline-grid optional-grid">
-          <label class="checkbox-line" title="Include solver outputs that are slightly short on requested levels so Suggest mode can complete them."><input id="near-miss-enabled" type="checkbox"/><span>Allow Near-Miss Solver Results</span></label>
-          <label class="field"><span title="Total requested skill points a build may be short by and still be kept for charm completion.">Near-Miss Max Missing Points</span><input id="near-miss-max-missing" type="number" min="1" max="12"/></label>
-          <label class="checkbox-line" title="Show builds that already satisfy targets before theoretical RNG charms."><input id="filter-meets-base" type="checkbox"/><span>Show meets targets without charm</span></label>
-          <label class="checkbox-line" title="Show builds that satisfy targets after applying the best suggested charm template."><input id="filter-meets-with-charm" type="checkbox"/><span>Show meets targets with best charm</span></label>
-          <label class="checkbox-line" title="Hide builds whose completion heavily depends on theoretical RNG charms."><input id="filter-hide-high-dependence" type="checkbox"/><span>Hide HIGH charm dependence</span></label>
-        </div>
-      </details>
-
-      <details class="optional-block">
-        <summary title="Import, export, and manage your owned charm list for Owned charm mode.">Owned Charms (Optional)</summary>
-        <div class="owned-charms-wrap">
-          <p class="muted">Use <a href="/charm-builder/index.html" target="_blank" rel="noreferrer">Owned Charm Builder</a> for a form UI, or paste JSON: [{"name":"WEX2 EE1","skills":{"57":2,"102":1},"slots":[2,1,0]}]</p>
-          <textarea id="owned-charms-json" class="owned-json" rows="5" placeholder='[{"name":"WEX2 EE1","skills":{"57":2,"102":1},"slots":[2,1,0]}]'></textarea>
-          <div class="button-row compact">
-            <button id="owned-charms-import" type="button">Import JSON</button>
-            <button id="owned-charms-export" type="button">Export JSON</button>
-            <button id="owned-charms-clear" type="button">Clear Owned</button>
-          </div>
-          <p id="owned-charms-summary" class="muted"></p>
-        </div>
-      </details>
-
-      <details class="optional-block">
-        <summary title="Bias flex-slot decoration suggestions toward comfort, balance, or damage goals.">Hunt Focus + Flex Preset (Optional)</summary>
-        <div class="controls-hunt">
-          <label class="field"><span title="Controls how leftover decoration slots are prioritized in flex suggestions.">Flex Preset</span>
-            <select id="flex-preset">
-              <option value="auto">Auto</option>
-              <option value="comfort">Comfort</option>
-              <option value="balanced">Balanced</option>
-              <option value="damage">Damage</option>
-            </select>
-          </label>
-          <label class="field"><span title="Optional hunt context to improve element-specific flex deco suggestions.">Hunt Element (Optional)</span>
-            <select id="hunt-element">
-              <option value="">None</option>
-              ${HUNT_ELEMENT_OPTIONS.map((element) => `<option value="${element}">${element[0].toUpperCase()}${element.slice(1)}</option>`).join("")}
-            </select>
-          </label>
-          <fieldset class="hunt-status-box" title="Optional hunt status context for flex slot suggestions.">
-            <legend>Hunt Status (Optional)</legend>
-            <div class="hunt-status-list">
-              ${HUNT_STATUS_OPTIONS.map(
-                (status) => {
-                  const statusLabel = `${status[0].toUpperCase()}${status.slice(1)}`;
-                  return `<label class="hunt-status-pill" title="Include ${statusLabel} hunt context when generating flex slot suggestions."><input type="checkbox" data-hunt-status="${status}" title="Toggle ${statusLabel} hunt context."/><span>${statusLabel}</span></label>`;
-                },
-              ).join("")}
-            </div>
-          </fieldset>
-        </div>
-      </details>
-    </div>
-      </div>
-    </details>
-    <div class="button-row">
-      <button id="optimize" class="btn-primary" type="button" title="Start a new optimization run with current filters and settings."><span class="icon icon-controls" aria-hidden="true"></span><span>Optimize</span></button>
-      <button id="stop" type="button" title="Stop all currently running worker searches.">Stop</button>
-      <button id="copy-link" type="button" title="Copy a URL containing your current settings and selected skills.">Copy Share Link</button>
-    </div>
-    <div class="progress-wrap">
-      <progress id="run-progress" max="1" value="0"></progress>
-      <p id="progress-text" class="muted">No active run.</p>
-    </div>
-    <p id="run-status" class="status-line"></p>
-  </section>
-
-  <section class="panel"><h2 class="section-title section-title-results"><span class="icon icon-results" aria-hidden="true"></span><span>Results</span></h2><div id="results"></div></section>
-  <footer class="footer-note">Not affiliated with Capcom. <a href="/about/index.html">About</a> | <a href="/faq/index.html">FAQ</a> | <a href="/charm-builder/index.html">Owned Charm Builder</a></footer>
-</div>`;
-
-const el = {
-  locale: document.querySelector<HTMLSelectElement>("#locale")!,
-  refreshData: document.querySelector<HTMLButtonElement>("#refresh-data")!,
-  dataStatus: document.querySelector<HTMLParagraphElement>("#data-status")!,
-  skillSearch: document.querySelector<HTMLInputElement>("#skill-search")!,
-  skillKindFilter: document.querySelector<HTMLSelectElement>("#skill-kind-filter")!,
-  skillList: document.querySelector<HTMLSelectElement>("#skill-list")!,
-  addSkill: document.querySelector<HTMLButtonElement>("#add-skill")!,
-  desiredList: document.querySelector<HTMLDivElement>("#desired-list")!,
-  decoSearch: document.querySelector<HTMLInputElement>("#deco-search")!,
-  decoAll: document.querySelector<HTMLButtonElement>("#deco-all")!,
-  decoNone: document.querySelector<HTMLButtonElement>("#deco-none")!,
-  decoList: document.querySelector<HTMLSelectElement>("#deco-list")!,
-  decoSummary: document.querySelector<HTMLParagraphElement>("#deco-summary")!,
-  applyBeginnerRealistic: document.querySelector<HTMLButtonElement>("#apply-beginner-realistic")!,
-  applyBeginnerGuidance: document.querySelector<HTMLButtonElement>("#apply-beginner-guidance")!,
-  applyAdvancedTheorycraft: document.querySelector<HTMLButtonElement>("#apply-advanced-theorycraft")!,
-  applyAdvancedOwned: document.querySelector<HTMLButtonElement>("#apply-advanced-owned")!,
-  allowAlpha: document.querySelector<HTMLInputElement>("#allow-alpha")!,
-  allowGamma: document.querySelector<HTMLInputElement>("#allow-gamma")!,
-  threads: document.querySelector<HTMLInputElement>("#threads")!,
-  resultsPerThread: document.querySelector<HTMLInputElement>("#results-per-thread")!,
-  charmMode: document.querySelector<HTMLSelectElement>("#charm-mode")!,
-  allowWeaponSetBonusRoll: document.querySelector<HTMLInputElement>("#allow-weapon-set-bonus-roll")!,
-  charmSuggestCount: document.querySelector<HTMLInputElement>("#charm-suggest-count")!,
-  charmMaxSkills: document.querySelector<HTMLInputElement>("#charm-max-skills")!,
-  charmSkillCap: document.querySelector<HTMLInputElement>("#charm-skill-cap")!,
-  charmSlotPatterns: document.querySelector<HTMLInputElement>("#charm-slot-patterns")!,
-  nearMissEnabled: document.querySelector<HTMLInputElement>("#near-miss-enabled")!,
-  nearMissMaxMissing: document.querySelector<HTMLInputElement>("#near-miss-max-missing")!,
-  charmMinScore: document.querySelector<HTMLInputElement>("#charm-min-score")!,
-  charmHideNoDeficit: document.querySelector<HTMLInputElement>("#charm-hide-no-deficit")!,
-  charmShowComfort: document.querySelector<HTMLInputElement>("#charm-show-comfort")!,
-  filterMeetsBase: document.querySelector<HTMLInputElement>("#filter-meets-base")!,
-  filterMeetsWithCharm: document.querySelector<HTMLInputElement>("#filter-meets-with-charm")!,
-  filterHideHighDependence: document.querySelector<HTMLInputElement>("#filter-hide-high-dependence")!,
-  ownedCharmsJson: document.querySelector<HTMLTextAreaElement>("#owned-charms-json")!,
-  ownedCharmsImport: document.querySelector<HTMLButtonElement>("#owned-charms-import")!,
-  ownedCharmsExport: document.querySelector<HTMLButtonElement>("#owned-charms-export")!,
-  ownedCharmsClear: document.querySelector<HTMLButtonElement>("#owned-charms-clear")!,
-  ownedCharmsSummary: document.querySelector<HTMLParagraphElement>("#owned-charms-summary")!,
-  flexPreset: document.querySelector<HTMLSelectElement>("#flex-preset")!,
-  huntElement: document.querySelector<HTMLSelectElement>("#hunt-element")!,
-  optimize: document.querySelector<HTMLButtonElement>("#optimize")!,
-  stop: document.querySelector<HTMLButtonElement>("#stop")!,
-  copyLink: document.querySelector<HTMLButtonElement>("#copy-link")!,
-  runProgress: document.querySelector<HTMLProgressElement>("#run-progress")!,
-  progressText: document.querySelector<HTMLParagraphElement>("#progress-text")!,
-  runStatus: document.querySelector<HTMLParagraphElement>("#run-status")!,
-  results: document.querySelector<HTMLDivElement>("#results")!,
-};
-const huntStatusInputs = Array.from(
-  document.querySelectorAll<HTMLInputElement>('input[data-hunt-status]'),
-);
-
-for (const locale of LOCALES) {
-  const option = document.createElement("option");
-  option.value = locale;
-  option.textContent = locale;
-  el.locale.append(option);
+const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+const value = (id: string) => $<HTMLInputElement>(id).value;
+const checked = (id: string) => $<HTMLInputElement>(id).checked;
+const integer = (id: string, min: number, max: number) =>
+  Math.min(max, Math.max(min, Math.floor(Number(value(id)) || min)));
+type Override = { defense: number; slots: SlotSize[]; state: string };
+let data: NormalizedData | null = null,
+  resultData: NormalizedData | null = null;
+let desired: DesiredSkill[] = [],
+  owned: Charm[] = readInventory(),
+  selected = new Set<number>(),
+  counts: Record<number, number> = {},
+  favorites = new Set<number>();
+let locks: Partial<Record<ArmorKind, number>> = {},
+  exclusions = new Set<number>(),
+  overrides: Record<number, Override> = {},
+  weaponSkills: SkillPoints = {};
+let results: BuildResult[] = [],
+  saved = readSavedBuilds(),
+  pins: BuildResult[] = [],
+  visibleSkills = 20,
+  visibleResults = 10,
+  runId = 0;
+let active: ReturnType<typeof startSearch> | null = null,
+  loading = false,
+  stale = false,
+  linkedBuild: SavedBuild | null = null;
+function status(text: string): void {
+  $("run-status").textContent = text;
 }
-
-const params = new URLSearchParams(window.location.search);
-const hashState = decodeShareStateV2(window.location.hash);
-
-function getStateParam(name: string): string | null {
-  if (hashState && Object.prototype.hasOwnProperty.call(hashState, name)) {
-    return hashState[name];
-  }
-  return params.get(name);
-}
-
-const decoParam = getStateParam("decos");
-const flexPresetParam = getStateParam("fp");
-const charmModeParam = getStateParam("cm");
-const allowWeaponSetBonusRollParam = getStateParam("awr");
-const charmSuggestCountParam = getStateParam("sc");
-const charmMaxSkillsParam = getStateParam("mss");
-const charmSkillCapParam = getStateParam("msl");
-const charmSlotPatternsParam = getStateParam("sp");
-const nearMissEnabledParam = getStateParam("nm");
-const nearMissMaxMissingParam = getStateParam("nmm");
-const minCharmScoreParam = getStateParam("mcs");
-const hideNoDeficitParam = getStateParam("hnd");
-const showComfortParam = getStateParam("scn");
-const filterMeetsBaseParam = getStateParam("fb");
-const filterMeetsWithCharmParam = getStateParam("fw");
-const filterHideHighDependenceParam = getStateParam("fh");
-const skillKindFilterParam = getStateParam("sk");
-const huntElementParam = getStateParam("he");
-const huntStatusParam = getStateParam("hs");
-const validFlexPresetModes: FlexPresetMode[] = ["auto", "comfort", "balanced", "damage"];
-const validCharmModes: CharmMode[] = ["off", "suggest", "owned"];
-const validSkillKindFilters: SkillKindFilter[] = ["all", "armor", "set", "group"];
-const parsedFlexPresetMode: FlexPresetMode = validFlexPresetModes.includes((flexPresetParam as FlexPresetMode) || "auto")
-  ? ((flexPresetParam as FlexPresetMode) || "auto")
-  : "auto";
-const parsedCharmMode: CharmMode = validCharmModes.includes((charmModeParam as CharmMode) || "off")
-  ? ((charmModeParam as CharmMode) || "off")
-  : "off";
-const parsedAllowWeaponSetBonusRoll = parseBool(allowWeaponSetBonusRollParam, true);
-const parsedSkillKindFilter: SkillKindFilter = validSkillKindFilters.includes((skillKindFilterParam as SkillKindFilter) || "all")
-  ? ((skillKindFilterParam as SkillKindFilter) || "all")
-  : "all";
-const parsedHuntElement: HuntElement | "" = HUNT_ELEMENT_OPTIONS.includes((huntElementParam as HuntElement) || ("" as HuntElement))
-  ? ((huntElementParam as HuntElement) || "")
-  : "";
-const parsedHuntStatuses = new Set<HuntStatus>();
-for (const part of (huntStatusParam || "").split(",")) {
-  const trimmed = part.trim();
-  if (!trimmed) continue;
-  if (HUNT_STATUS_OPTIONS.includes(trimmed as HuntStatus)) {
-    parsedHuntStatuses.add(trimmed as HuntStatus);
-  }
-}
-const defaultCharmSlotPatternText = DEFAULT_CHARM_SLOT_PATTERNS.map((pattern) => pattern.join("-")).join(",");
-const parsedCharmSuggestCount = clampInt(
-  charmSuggestCountParam,
-  DEFAULT_CHARM_SUGGESTION_OPTIONS.suggestCount,
-  1,
-  20,
-);
-const parsedCharmMaxSkills = clampInt(
-  charmMaxSkillsParam,
-  DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSuggestedSkills,
-  1,
-  12,
-);
-const parsedCharmSkillCap = clampInt(
-  charmSkillCapParam,
-  DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSkillLevelPerCharmSkill,
-  1,
-  7,
-);
-const parsedNearMissEnabled = parseBool(nearMissEnabledParam, true);
-const parsedNearMissMaxMissingPoints = clampInt(
-  nearMissMaxMissingParam,
-  DEFAULT_NEAR_MISS_MAX_MISSING_POINTS,
-  1,
-  12,
-);
-const parsedMinCharmScoreToShow = clampFloat(minCharmScoreParam, 1, 0, 100);
-const parsedHideSuggestionsIfNoDeficits = parseBool(hideNoDeficitParam, true);
-const parsedShowComfortCharmWhenNoDeficits = parseBool(showComfortParam, false);
-const parsedCharmSlotPatternText = (charmSlotPatternsParam || defaultCharmSlotPatternText).trim() || defaultCharmSlotPatternText;
-const parsedCharmSlotPatterns = parseSlotPatterns(
-  parsedCharmSlotPatternText,
-  DEFAULT_CHARM_SLOT_PATTERNS,
-);
-const defaultCharmFilters = defaultFiltersForCharmMode(parsedCharmMode);
-const parsedFilterShowMeetsBase = parseBool(filterMeetsBaseParam, defaultCharmFilters.showMeetsBase);
-const parsedFilterShowMeetsWithBestCharm = parseBool(
-  filterMeetsWithCharmParam,
-  defaultCharmFilters.showMeetsWithBestCharm,
-);
-const parsedFilterHideHighDependence = parseBool(filterHideHighDependenceParam, false);
-const localeParam = getStateParam("loc");
-const desiredParam = getStateParam("ds");
-const allowAlphaParam = getStateParam("aa");
-const allowGammaParam = getStateParam("ag");
-const threadsParam = getStateParam("t");
-const resultsPerThreadParam = getStateParam("r");
-const state: State = {
-  locale: LOCALES.includes(localeParam || "") ? (localeParam as string) : "en",
-  data: null,
-  dataSource: null,
-  loading: false,
-  dataError: "",
-  desired: parseDesired(desiredParam),
-  allowAlpha: parseBool(allowAlphaParam, true),
-  allowGamma: parseBool(allowGammaParam, true),
-  useAllDecos: !decoParam || decoParam === "all",
-  selectedDecos: decoParam && decoParam !== "all" ? parseIdSet(decoParam) : new Set<number>(),
-  threads: clampInt(threadsParam, DEFAULT_THREADS, 1, MAX_THREADS),
-  resultsPerThread: clampInt(resultsPerThreadParam, DEFAULT_RESULTS, 1, MAX_RESULTS),
-  optimizing: false,
-  runStatus: "",
-  rawResults: [],
-  results: [],
-  workerStats: [],
-  workerProgressByIndex: {},
-  expectedWorkers: 0,
-  activeWorkerCancels: [],
-  cancelRequested: false,
-  skillSearch: "",
-  skillKindFilter: parsedSkillKindFilter,
-  decoSearch: "",
-  charmMode: parsedCharmMode,
-  allowWeaponSetBonusRoll: parsedAllowWeaponSetBonusRoll,
-  charmSuggestCount: parsedCharmSuggestCount,
-  charmMaxSuggestedSkills: parsedCharmMaxSkills,
-  charmMaxSkillLevelPerSkill: parsedCharmSkillCap,
-  charmSlotPatternsText: parsedCharmSlotPatternText,
-  charmSlotPatterns: parsedCharmSlotPatterns,
-  nearMissEnabled: parsedNearMissEnabled,
-  nearMissMaxMissingPoints: parsedNearMissMaxMissingPoints,
-  minCharmScoreToShow: parsedMinCharmScoreToShow,
-  hideSuggestionsIfNoDeficits: parsedHideSuggestionsIfNoDeficits,
-  showComfortCharmWhenNoDeficits: parsedShowComfortCharmWhenNoDeficits,
-  filterShowMeetsBase: parsedFilterShowMeetsBase,
-  filterShowMeetsWithBestCharm: parsedFilterShowMeetsWithBestCharm,
-  filterHideHighCharmDependence: parsedFilterHideHighDependence,
-  previewCharmByResultKey: {},
-  expandedCharmSuggestionsByResultKey: {},
-  ownedCharms: readOwnedCharmsFromStorage(),
-  flexPresetMode: parsedFlexPresetMode,
-  huntElement: parsedHuntElement,
-  huntStatuses: parsedHuntStatuses,
-};
-
-const decoLabel: Record<number, string> = {};
-const decoSearch: Record<number, string> = {};
-
-function parseBool(value: string | null, fallback: boolean): boolean {
-  if (value === null) return fallback;
-  return value === "1" || value.toLowerCase() === "true";
-}
-
-function clampInt(value: string | null, fallback: number, min: number, max: number): number {
-  const parsed = Number.parseInt(value || "", 10);
-  if (Number.isNaN(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
-}
-
-function clampFloat(value: string | null, fallback: number, min: number, max: number): number {
-  const parsed = Number.parseFloat(value || "");
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
-}
-
-function defaultFiltersForCharmMode(mode: CharmMode): {
-  showMeetsBase: boolean;
-  showMeetsWithBestCharm: boolean;
-} {
-  if (mode === "suggest") {
-    return {
-      showMeetsBase: true,
-      showMeetsWithBestCharm: true,
-    };
-  }
-  if (mode === "owned") {
-    return {
-      showMeetsBase: true,
-      showMeetsWithBestCharm: true,
-    };
-  }
-  return {
-    showMeetsBase: true,
-    showMeetsWithBestCharm: false,
-  };
-}
-
-function parseSlotPatterns(
-  raw: string,
-  fallback: Array<[number, number, number]>,
-): Array<[number, number, number]> {
-  const deduped = new Map<string, [number, number, number]>();
-  for (const segment of raw.split(",")) {
-    const text = segment.trim();
-    if (!text) continue;
-    const parts = text.split("-").map((value) => Number.parseInt(value, 10));
-    if (parts.length !== 3 || parts.some((value) => Number.isNaN(value))) {
-      continue;
-    }
-    const normalized: [number, number, number] = [
-      Math.max(0, Math.min(3, parts[0])),
-      Math.max(0, Math.min(3, parts[1])),
-      Math.max(0, Math.min(3, parts[2])),
-    ];
-    deduped.set(normalized.join("-"), normalized);
-  }
-
-  if (deduped.size === 0) {
-    return [...fallback];
-  }
-  return [...deduped.values()];
-}
-
-function normalizeCharmSlots(raw: unknown): [number, number, number] | null {
-  if (!Array.isArray(raw) || raw.length !== 3) {
-    return null;
-  }
-  const values = raw.map((value) => Number.parseInt(String(value), 10));
-  if (values.some((value) => Number.isNaN(value))) {
-    return null;
-  }
-  return [
-    Math.max(0, Math.min(3, values[0])),
-    Math.max(0, Math.min(3, values[1])),
-    Math.max(0, Math.min(3, values[2])),
-  ];
-}
-
-function normalizeCharmSkillsNumericOnly(raw: unknown): Record<string, number> {
-  if (!raw || typeof raw !== "object") {
-    return {};
-  }
-  const out: Record<string, number> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    const skillId = Number.parseInt(key, 10);
-    const level = Number.parseInt(String(value), 10);
-    if (!Number.isFinite(skillId) || Number.isNaN(level) || skillId <= 0 || level <= 0) {
-      continue;
-    }
-    out[String(skillId)] = level;
-  }
-  return out;
-}
-
-function readOwnedCharmsFromStorage(): Charm[] {
-  const raw = localStorage.getItem(OWNED_CHARMS_STORAGE_KEY);
-  if (!raw) {
-    return [];
-  }
+function parseJson<T>(text: string | null | undefined, fallback: T): T {
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    const charms: Charm[] = [];
-    for (let i = 0; i < parsed.length; i += 1) {
-      const entry = parsed[i] as Record<string, unknown>;
-      const slots = normalizeCharmSlots(entry?.slots);
-      if (!slots) {
-        continue;
-      }
-      const skills = normalizeCharmSkillsNumericOnly(entry?.skills);
-      charms.push({
-        id: `owned-${i + 1}`,
-        name: typeof entry?.name === "string" && entry.name.trim() ? entry.name.trim() : `Owned Charm #${i + 1}`,
-        rarity: typeof entry?.rarity === "number" ? entry.rarity : undefined,
-        skills,
-        slots,
-        weaponSlot: 0,
-      });
-    }
-    return charms;
+    return text ? (JSON.parse(text) as T) : fallback;
   } catch {
-    return [];
+    return fallback;
   }
 }
-
-function writeOwnedCharmsToStorage(charms: Charm[]): void {
-  const serializable = charms.map((charm) => ({
-    name: charm.name,
-    rarity: charm.rarity,
-    skills: charm.skills,
-    slots: charm.slots,
+function slots(text: string): SlotSize[] {
+  if (!text.trim()) return [];
+  const values = text
+    .split(/[,\s-]+/)
+    .filter(Boolean)
+    .map(Number);
+  if (
+    values.length > 3 ||
+    values.some((n) => !Number.isInteger(n) || n < 0 || n > 3)
+  )
+    throw new Error("Enter up to three slot sizes 0–3, such as 3,2,1.");
+  return values.filter((n) => n > 0) as SlotSize[];
+}
+function inventoryRanks(charms: Charm[]): CharmRank[] {
+  return charms.map((c, i) => ({
+    id: -(i + 1),
+    charmId: -(i + 1),
+    name: c.name,
+    level: 0,
+    rarity: c.rarity ?? 0,
+    skills: Object.fromEntries(
+      Object.entries(c.skills).map(([id, n]) => [Number(id), n]),
+    ),
+    slots: c.slots.filter((n) => n > 0) as SlotSize[],
+    weaponSlots: c.weaponSlot ? [c.weaponSlot as SlotSize] : [],
   }));
-  localStorage.setItem(OWNED_CHARMS_STORAGE_KEY, JSON.stringify(serializable));
 }
-
-function serializeOwnedCharmsJson(charms: Charm[], pretty = true): string {
-  const serializable = charms.map((charm) => ({
-    name: charm.name,
-    rarity: charm.rarity,
-    skills: charm.skills,
-    slots: charm.slots,
-  }));
-  return JSON.stringify(serializable, null, pretty ? 2 : 0);
-}
-
-function serializeSlotPatterns(patterns: Array<[number, number, number]>): string {
-  return patterns.map((pattern) => pattern.join("-")).join(",");
-}
-
-function parseDesired(raw: string | null): DesiredSkill[] {
-  if (!raw) return [];
-  const seen = new Set<number>();
-  const desired: DesiredSkill[] = [];
-  for (const part of raw.split(",")) {
-    const [idPart, levelPart] = part.split("-");
-    const id = Number.parseInt(idPart || "", 10);
-    const level = Number.parseInt(levelPart || "", 10);
-    if (Number.isNaN(id) || Number.isNaN(level) || id <= 0 || level <= 0 || seen.has(id)) continue;
-    seen.add(id);
-    desired.push({ skillId: id, level });
-  }
-  return desired;
-}
-
-function parseIdSet(raw: string): Set<number> {
-  const output = new Set<number>();
-  for (const part of raw.split(",")) {
-    const id = Number.parseInt(part, 10);
-    if (!Number.isNaN(id) && id > 0) output.add(id);
-  }
-  return output;
-}
-
-const escText = escapeText;
-const escAttr = escapeAttr;
-
-function armorAllowed(piece: ArmorPiece): boolean {
-  if (piece.isAlpha && !state.allowAlpha) return false;
-  if (piece.isGamma && !state.allowGamma) return false;
-  return true;
-}
-
-function isWeaponSkillKind(kind: string | undefined): boolean {
-  return (kind ?? "").toLowerCase() === "weapon";
-}
-
-function normalizeSkillKind(kind: string | undefined): SkillKindFilter | "weapon" | "unknown" {
-  const normalized = (kind ?? "").toLowerCase();
-  if (normalized === "weapon") return "weapon";
-  if (normalized === "armor") return "armor";
-  if (normalized === "set") return "set";
-  if (normalized === "group") return "group";
-  return "unknown";
-}
-
-function matchesSkillKindFilter(kind: string | undefined, filter: SkillKindFilter): boolean {
-  const normalized = normalizeSkillKind(kind);
-  if (normalized === "weapon") {
-    return false;
-  }
-  if (filter === "all") {
-    return true;
-  }
-  return normalized === filter;
-}
-
-function skillKindLabel(kind: string | undefined): string {
-  const normalized = normalizeSkillKind(kind);
-  if (normalized === "set") return "Set";
-  if (normalized === "group") return "Group";
-  if (normalized === "armor") return "Armor";
-  return "Other";
-}
-
-function skillTooltip(skillId: number, levelHint?: number): string {
-  if (!state.data) {
-    return "";
-  }
-  const skill = state.data.skillsById[skillId];
-  if (!skill) {
-    return "";
-  }
-  const lines: string[] = [skill.name];
-  const rankEntries = Object.entries(skill.rankDescriptions ?? {})
-    .map(([rawLevel, text]) => ({ level: Number(rawLevel), text }))
-    .filter((entry) => Number.isFinite(entry.level) && entry.level > 0 && entry.text.length > 0)
-    .sort((a, b) => a.level - b.level);
-  if (skill.description) {
-    lines.push(skill.description);
-  }
-  let addedRankLine = false;
-  if (typeof levelHint === "number" && levelHint > 0) {
-    const clampedLevel = Math.max(1, Math.min(skill.maxLevel, levelHint));
-    const rankText = skill.rankDescriptions?.[clampedLevel] ?? "";
-    if (rankText) {
-      lines.push(`Lv ${clampedLevel}: ${rankText}`);
-      addedRankLine = true;
-    }
-  }
-  if (!addedRankLine && rankEntries.length > 0) {
-    for (const entry of rankEntries.slice(0, 2)) {
-      lines.push(`Lv ${entry.level}: ${entry.text}`);
-    }
-  }
-  if (lines.length === 1) {
-    lines.push(`Max level: ${skill.maxLevel}`);
-  }
-  return lines.join("\n");
-}
-
-function isCharmRollableSkillId(skillId: number): boolean {
-  if (!state.data) {
-    return true;
-  }
-  return normalizeSkillKind(state.data.skillsById[skillId]?.kind) === "armor";
-}
-
-function normalizeSkillLookupName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function resolveSkillIdFromImportKey(rawKey: string): number | null {
-  if (!state.data) {
-    const numeric = Number.parseInt(rawKey, 10);
-    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
-  }
-  const numeric = Number.parseInt(rawKey, 10);
-  if (Number.isFinite(numeric) && numeric > 0 && state.data.skillsById[numeric]) {
-    return numeric;
-  }
-  const target = normalizeSkillLookupName(rawKey);
-  if (!target) {
-    return null;
-  }
-  for (const skill of state.data.skills) {
-    if (normalizeSkillLookupName(skill.name) === target) {
-      return skill.id;
-    }
-  }
-  return null;
-}
-
-function parseOwnedCharmsJsonInput(rawText: string): Charm[] {
-  const parsed = JSON.parse(rawText);
-  if (!Array.isArray(parsed)) {
-    throw new Error("JSON must be an array of charms.");
-  }
-
-  const output: Charm[] = [];
-  for (let i = 0; i < parsed.length; i += 1) {
-    const entry = parsed[i] as Record<string, unknown>;
-    const slots = normalizeCharmSlots(entry?.slots);
-    if (!slots) {
-      continue;
-    }
-    const rawSkills = entry?.skills;
-    const normalizedSkills: Record<string, number> = {};
-    if (rawSkills && typeof rawSkills === "object") {
-      for (const [rawKey, rawValue] of Object.entries(rawSkills as Record<string, unknown>)) {
-        const skillId = resolveSkillIdFromImportKey(rawKey);
-        const level = Number.parseInt(String(rawValue), 10);
-        if (!skillId || Number.isNaN(level) || level <= 0) {
-          continue;
-        }
-        if (!isCharmRollableSkillId(skillId)) {
-          continue;
-        }
-        normalizedSkills[String(skillId)] = level;
-      }
-    }
-    output.push({
-      id: `owned-${i + 1}`,
-      name: typeof entry?.name === "string" && entry.name.trim() ? entry.name.trim() : `Owned Charm #${i + 1}`,
-      rarity: typeof entry?.rarity === "number" ? entry.rarity : undefined,
-      skills: normalizedSkills,
-      slots,
-      weaponSlot: 0,
-    });
-  }
-  return output;
-}
-
-function isSelectableRequestedSkillId(skillId: number): boolean {
-  if (!state.data) {
-    return false;
-  }
-  return !isWeaponSkillKind(state.data.skillsById[skillId]?.kind);
-}
-
-function simplifyDecorationDisplayName(name: string): string {
-  return name.replace(/\s*\[\d+\]\s*$/, "");
-}
-
-function decorationKindLabel(kind: string): string {
-  if (kind.toLowerCase() === "armor") return "Armor";
-  if (kind.toLowerCase() === "weapon") return "Weapon";
-  return kind;
-}
-
-function formatDecorationLabel(decoration: NormalizedData["decorations"][number], data: NormalizedData): string {
-  const skillText = Object.entries(decoration.skills)
-    .map(([id, level]) => `${data.skillsById[Number(id)]?.name || `Skill #${id}`} +${level}`)
-    .join(", ");
-  const decorationName = simplifyDecorationDisplayName(decoration.name);
-  const metaText = `S${decoration.slotReq}, ${decorationKindLabel(decoration.kind)}`;
-  return skillText.length > 0 ? `${decorationName} (${metaText}) - ${skillText}` : `${decorationName} (${metaText})`;
-}
-
-const numberFormatter = new Intl.NumberFormat("en-US");
-function formatCount(value: number): string {
-  return numberFormatter.format(Math.max(0, Math.floor(value)));
-}
-
-function formatPercent(numerator: number, denominator: number): string {
-  if (denominator <= 0) {
-    return "0.0%";
-  }
-  const raw = (numerator / denominator) * 100;
-  if (raw > 0 && raw < 0.1) {
-    return "<0.1%";
-  }
-  return `${Math.min(100, raw).toFixed(1)}%`;
-}
-
-type AggregatedProgress = {
-  completedArmorCombos: number;
-  totalArmorCombos: number;
-  evaluatedCandidates: number;
-  totalCandidates: number;
-  feasibleBuilds: number;
-};
-
-let progressRenderTimer: number | null = null;
-let lastProgressRenderedAt = 0;
-
-function aggregateProgress(): AggregatedProgress {
-  const progressEntries = Object.values(state.workerProgressByIndex);
-  let completedArmorCombos = 0;
-  let totalArmorCombos = 0;
-  let evaluatedCandidates = 0;
-  let totalCandidates = 0;
-  let feasibleBuilds = 0;
-
-  for (const progress of progressEntries) {
-    completedArmorCombos += progress.completedArmorCombos;
-    totalArmorCombos += progress.totalArmorCombos;
-    evaluatedCandidates += progress.evaluatedCandidates;
-    totalCandidates += progress.totalCandidates;
-    feasibleBuilds += progress.feasibleBuilds;
-  }
-
+function settings(): Record<string, string> {
   return {
-    completedArmorCombos,
-    totalArmorCombos,
-    evaluatedCandidates,
-    totalCandidates,
-    feasibleBuilds,
+    loc: value("locale"),
+    cm: value("mode"),
+    ds: desired
+      .map((s) => `${s.skillId}:${s.level}${s.optional ? ":optional" : ""}`)
+      .join(","),
+    decos: [...selected].join(","),
+    dc: JSON.stringify(counts),
+    od: checked("owned-decos") ? "1" : "0",
+    aa: checked("alpha") ? "1" : "0",
+    ag: checked("gamma") ? "1" : "0",
+    r: value("result-limit"),
+    t: value("workers"),
+    nmm: value("missing"),
+    sort: value("sort"),
+    rank: value("armor-rank"),
+    rarity: value("rarity"),
+    hr: value("hr"),
+    up: value("upgrade"),
+    locks: JSON.stringify(locks),
+    excluded: JSON.stringify([...exclusions]),
+    overrides: JSON.stringify(overrides),
+    ws: value("weapon-set"),
+    wg: value("weapon-group"),
+    wslots: value("weapon-slots"),
+    wskills: JSON.stringify(weaponSkills),
+    fp: value("flex-preset"),
+    favorites: JSON.stringify([...favorites]),
+    version: data?.version ?? "unknown",
   };
 }
-
-function renderProgress(): void {
-  const aggregated = aggregateProgress();
-  const max = aggregated.totalCandidates > 0 ? aggregated.totalCandidates : 1;
-  const value = Math.min(max, aggregated.evaluatedCandidates);
-  el.runProgress.max = max;
-  el.runProgress.value = value;
-
-  if (state.optimizing) {
-    if (aggregated.totalCandidates > 0) {
-      const percent = formatPercent(aggregated.evaluatedCandidates, aggregated.totalCandidates);
-      el.progressText.textContent = `${percent}% | ${formatCount(aggregated.evaluatedCandidates)}/${formatCount(aggregated.totalCandidates)} outcomes | armor combos ${formatCount(aggregated.completedArmorCombos)}/${formatCount(aggregated.totalArmorCombos)} | feasible ${formatCount(aggregated.feasibleBuilds)}`;
-    } else {
-      el.progressText.textContent = "Preparing search space...";
-    }
-    return;
-  }
-
-  if (aggregated.totalCandidates > 0) {
-    el.progressText.textContent = `Last run: ${formatCount(aggregated.evaluatedCandidates)}/${formatCount(aggregated.totalCandidates)} estimated outcomes checked.`;
-  } else {
-    el.progressText.textContent = "No active run.";
+function storeSettings(): void {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings()));
+  } catch {
+    /* Session remains usable. */
   }
 }
-
-function flushProgressRender(): void {
-  if (progressRenderTimer !== null) {
-    window.clearTimeout(progressRenderTimer);
-    progressRenderTimer = null;
-  }
-  lastProgressRenderedAt = performance.now();
-  renderProgress();
-  el.runStatus.textContent = state.runStatus;
+function numericRecord(
+  text: string | undefined,
+  min: number,
+  max: number,
+): Record<string, number> {
+  const raw = parseJson<unknown>(text, {});
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      ([, n]) =>
+        typeof n === "number" && Number.isInteger(n) && n >= min && n <= max,
+    ),
+  );
 }
-
-function scheduleProgressRender(): void {
-  const now = performance.now();
-  const elapsed = now - lastProgressRenderedAt;
-  if (elapsed >= PROGRESS_RENDER_INTERVAL_MS) {
-    flushProgressRender();
-    return;
-  }
-  if (progressRenderTimer !== null) {
-    return;
-  }
-  progressRenderTimer = window.setTimeout(() => {
-    progressRenderTimer = null;
-    flushProgressRender();
-  }, PROGRESS_RENDER_INTERVAL_MS - elapsed);
+function idList(text: string | undefined): number[] {
+  const raw = parseJson<unknown>(text, []);
+  return Array.isArray(raw)
+    ? raw.filter((n) => Number.isInteger(n) && n > 0)
+    : [];
 }
-
-function rerender(): void {
-  el.locale.value = state.locale;
-  el.skillKindFilter.value = state.skillKindFilter;
-  el.allowAlpha.checked = state.allowAlpha;
-  el.allowGamma.checked = state.allowGamma;
-  el.threads.value = String(state.threads);
-  el.resultsPerThread.value = String(state.resultsPerThread);
-  el.charmMode.value = state.charmMode;
-  el.allowWeaponSetBonusRoll.checked = state.allowWeaponSetBonusRoll;
-  el.charmSuggestCount.value = String(state.charmSuggestCount);
-  el.charmMaxSkills.value = String(state.charmMaxSuggestedSkills);
-  el.charmSkillCap.value = String(state.charmMaxSkillLevelPerSkill);
-  el.charmSlotPatterns.value = state.charmSlotPatternsText;
-  el.nearMissEnabled.checked = state.nearMissEnabled;
-  el.nearMissMaxMissing.value = String(state.nearMissMaxMissingPoints);
-  el.charmMinScore.value = state.minCharmScoreToShow.toFixed(1);
-  el.charmHideNoDeficit.checked = state.hideSuggestionsIfNoDeficits;
-  el.charmShowComfort.checked = state.showComfortCharmWhenNoDeficits;
-  el.filterMeetsBase.checked = state.filterShowMeetsBase;
-  el.filterMeetsWithCharm.checked = state.filterShowMeetsWithBestCharm;
-  el.filterHideHighDependence.checked = state.filterHideHighCharmDependence;
-  if (document.activeElement !== el.ownedCharmsJson) {
-    el.ownedCharmsJson.value = serializeOwnedCharmsJson(state.ownedCharms, true);
-  }
-  el.ownedCharmsSummary.textContent = `${state.ownedCharms.length} owned charms loaded.`;
-  const charmModeOff = state.charmMode === "off";
-  const suggestOnlyDisabled = state.charmMode !== "suggest";
-  const supportsNearMiss = state.charmMode !== "off";
-  el.charmSuggestCount.disabled = charmModeOff;
-  el.charmMaxSkills.disabled = suggestOnlyDisabled;
-  el.charmSkillCap.disabled = suggestOnlyDisabled;
-  el.charmSlotPatterns.disabled = suggestOnlyDisabled;
-  el.charmMinScore.disabled = suggestOnlyDisabled;
-  el.charmHideNoDeficit.disabled = suggestOnlyDisabled;
-  el.charmShowComfort.disabled = suggestOnlyDisabled;
-  el.nearMissEnabled.disabled = !supportsNearMiss;
-  el.nearMissMaxMissing.disabled = !supportsNearMiss || !state.nearMissEnabled;
-  el.filterMeetsBase.disabled = false;
-  el.filterMeetsWithCharm.disabled = state.charmMode === "off";
-  el.filterHideHighDependence.disabled = state.charmMode === "off";
-  el.ownedCharmsJson.disabled = state.optimizing;
-  el.ownedCharmsImport.disabled = state.optimizing;
-  el.ownedCharmsExport.disabled = state.optimizing;
-  el.ownedCharmsClear.disabled = state.optimizing;
-  el.flexPreset.value = state.flexPresetMode;
-  el.huntElement.value = state.huntElement;
-  for (const input of huntStatusInputs) {
-    input.checked = state.huntStatuses.has(input.dataset.huntStatus as HuntStatus);
-  }
-  const controlsDisabled = state.loading || state.optimizing;
-  el.applyBeginnerRealistic.disabled = controlsDisabled;
-  el.applyBeginnerGuidance.disabled = controlsDisabled;
-  el.applyAdvancedTheorycraft.disabled = controlsDisabled;
-  el.applyAdvancedOwned.disabled = controlsDisabled;
-  renderDataStatus();
-  renderSkillList();
-  renderDesired();
-  renderDecoList();
-  renderProgress();
-  renderResults();
-  const disable = state.loading || state.optimizing || !state.data;
-  el.optimize.disabled = disable;
-  el.stop.disabled = !state.optimizing;
-  el.locale.disabled = state.loading || state.optimizing;
-}
-
-function renderDataStatus(): void {
-  if (state.loading) {
-    el.dataStatus.textContent = "Loading data...";
-    return;
-  }
-  if (state.dataError) {
-    el.dataStatus.textContent = state.dataError;
-    el.dataStatus.className = "status-line error";
-    return;
-  }
-  if (!state.data) {
-    el.dataStatus.textContent = "No data loaded.";
-    return;
-  }
-  const source = state.dataSource === "network" ? "network" : state.dataSource === "cache-fallback" ? "cache fallback" : "cache";
-  el.dataStatus.className = "status-line";
-  el.dataStatus.textContent = `Locale ${state.data.locale} | Version ${state.data.version} | ${source}`;
-}
-
-function renderSkillList(): void {
-  if (!state.data) return;
-  const q = state.skillSearch.toLowerCase();
-  const list = state.data.skills
-    .filter((skill) => matchesSkillKindFilter(skill.kind, state.skillKindFilter))
-    .filter((skill) => skill.name.toLowerCase().includes(q))
-    .slice(0, 120);
-  el.skillList.innerHTML = safeJoin(
-    list.map((skill) => `<option value="${skill.id}" title="${escAttr(skillTooltip(skill.id))}">[${escText(skillKindLabel(skill.kind))}] ${escText(skill.name)} (max ${skill.maxLevel})</option>`),
+function validOverrides(text: string | undefined): Record<number, Override> {
+  const raw = parseJson<unknown>(text, {});
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      ([id, o]) =>
+        Number.isInteger(Number(id)) &&
+        o &&
+        typeof o.defense === "number" &&
+        Number.isInteger(o.defense) &&
+        o.defense >= 0 &&
+        o.defense <= 999 &&
+        Array.isArray(o.slots) &&
+        o.slots.length <= 3 &&
+        o.slots.every((s: number) => Number.isInteger(s) && s > 0 && s <= 3) &&
+        typeof o.state === "string",
+    ),
   );
 }
 
-function renderDesired(): void {
-  if (!state.data) {
-    el.desiredList.innerHTML = `<p class="muted">Load data first.</p>`;
-    return;
+function restoreSettings(): void {
+  let local: Record<string, string> = {};
+  try {
+    local = parseJson(localStorage.getItem(SETTINGS_KEY), {});
+  } catch {
+    /* Storage optional. */
   }
-  if (state.desired.length === 0) {
-    el.desiredList.innerHTML = `<p class="muted">No target skills selected.</p>`;
-    return;
-  }
-  el.desiredList.innerHTML = `<table class="simple-table desired-table"><thead><tr><th>Skill</th><th>Target Level</th><th></th></tr></thead><tbody>${
-    state.desired
-      .map((d) => {
-        const skill = state.data!.skillsById[d.skillId];
-        if (!skill) return "";
-        const tooltip = escAttr(skillTooltip(d.skillId, d.level));
-        const levelButtonCount = Math.max(5, skill.maxLevel);
-        const levelButtons = Array.from({ length: levelButtonCount }, (_, index) => {
-          const level = index + 1;
-          const selectable = level <= skill.maxLevel;
-          const active = selectable && d.level === level;
-          const classNames = ["level-btn"];
-          if (active) classNames.push("active");
-          return `<button type="button" class="${classNames.join(" ")}" data-skill-id="${d.skillId}" data-level="${level}" ${selectable ? "" : "disabled"}>${level}</button>`;
-        }).join("");
-        return `<tr><td><div class="desired-skill-cell"><span title="${tooltip}">${escText(skill.name)}</span><span class="skill-kind-chip">${escText(skillKindLabel(skill.kind))}</span></div></td><td><div class="level-picker">${levelButtons}</div></td><td><button class="remove" data-skill-id="${d.skillId}" type="button">Remove</button></td></tr>`;
-      })
-      .join("")
-  }</tbody></table>`;
-}
-
-function renderDecoList(): void {
-  if (!state.data) return;
-  const q = state.decoSearch.toLowerCase();
-  const list = state.data.decorations.filter((d) => !q || (decoSearch[d.id] || "").includes(q));
-  el.decoList.innerHTML = safeJoin(
-    list.map((d) => `<option value="${d.id}"${state.selectedDecos.has(d.id) ? " selected" : ""}>${escText(decoLabel[d.id] || d.name)}</option>`),
-  );
-  const selectedDecorationCount = state.data.decorations.reduce(
-    (count, decoration) => count + (state.selectedDecos.has(decoration.id) ? 1 : 0),
-    0,
-  );
-  el.decoSummary.textContent = `Selected ${selectedDecorationCount}/${state.data.decorations.length} decorations`;
-}
-
-function skillChips(points: SkillPoints): string {
-  if (!state.data) return "";
-  const requested = new Set(state.desired.map((d) => d.skillId));
-  return Object.entries(points)
-    .map(([idStr, level]) => ({ id: Number(idStr), level }))
-    .filter((x) => x.level > 0)
-    .sort((a, b) => b.level - a.level || a.id - b.id)
-    .map((x) => {
-      const name = state.data!.skillsById[x.id]?.name || `Skill #${x.id}`;
-      const cls = requested.has(x.id) ? "skill-chip requested" : "skill-chip";
-      return `<span class="${cls}" title="${escAttr(skillTooltip(x.id, x.level))}">${escText(name)} +${x.level}</span>`;
-    })
-    .join("");
-}
-
-function requestedSkillChecklist(points: SkillPoints): string {
-  if (!state.data || state.desired.length === 0) {
-    return `<p class="muted">No requested skills.</p>`;
-  }
-
-  const rows = state.desired
-    .map((desired) => {
-      const name = state.data!.skillsById[desired.skillId]?.name || `Skill #${desired.skillId}`;
-      const total = points[desired.skillId] ?? 0;
-      const met = total >= desired.level;
-      return `<div class="target-row ${met ? "met" : "missing"}"><span class="target-name" title="${escAttr(skillTooltip(desired.skillId, desired.level))}">${escText(name)}</span><span class="target-value">${total}/${desired.level}</span><span class="target-flag">${met ? "Met" : "Missing"}</span></div>`;
-    })
-    .join("");
-
-  return `<div class="target-list">${rows}</div>`;
-}
-
-type PieceKey = "head" | "chest" | "arms" | "waist" | "legs" | "charm";
-type PlannedSlot = { slotSize: number; decoName: string | null };
-type PieceSlotPlan = { key: PieceKey; label: string; name: string; slots: PlannedSlot[] };
-
-const pieceSlotPlanCache = new Map<string, PieceSlotPlan[]>();
-const gearRenderCache = new Map<string, string>();
-const flexRenderCache = new Map<string, string>();
-
-function clearResultRenderCaches(): void {
-  pieceSlotPlanCache.clear();
-  gearRenderCache.clear();
-  flexRenderCache.clear();
-}
-
-function clearFlexRenderCache(): void {
-  flexRenderCache.clear();
-}
-
-function buildPieceSlotPlans(result: BuildResult): PieceSlotPlan[] {
-  if (!state.data) return [];
-  const cached = pieceSlotPlanCache.get(result.tieKey);
-  if (cached) {
-    return cached;
-  }
-
-  const pieceOrder: PieceKey[] = ["head", "chest", "arms", "waist", "legs", "charm"];
-  const pieceLabel: Record<PieceKey, string> = {
-    head: "Head",
-    chest: "Chest",
-    arms: "Arms",
-    waist: "Waist",
-    legs: "Legs",
-    charm: "Charm",
+  const shared = decodeShareStateV2(location.hash),
+    query = Object.fromEntries(new URLSearchParams(location.search));
+  const input = shared ?? (location.search ? query : local);
+  const fields: Record<string, string> = {
+    loc: "locale",
+    cm: "mode",
+    r: "result-limit",
+    t: "workers",
+    nmm: "missing",
+    sort: "sort",
+    rank: "armor-rank",
+    rarity: "rarity",
+    hr: "hr",
+    up: "upgrade",
+    fp: "flex-preset",
+    wslots: "weapon-slots",
   };
-
-  const pieceNames: Record<PieceKey, string> = {
-    head: state.data.armorById[result.armor.head]?.name || "?",
-    chest: state.data.armorById[result.armor.chest]?.name || "?",
-    arms: state.data.armorById[result.armor.arms]?.name || "?",
-    waist: state.data.armorById[result.armor.waist]?.name || "?",
-    legs: state.data.armorById[result.armor.legs]?.name || "?",
-    charm: result.charmName || state.data.charmRankById[result.charmRankId]?.name || "?",
-  };
-
-  const slotsByPiece: Record<PieceKey, PlannedSlot[]> = {
-    head: (state.data.armorById[result.armor.head]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-    chest: (state.data.armorById[result.armor.chest]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-    arms: (state.data.armorById[result.armor.arms]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-    waist: (state.data.armorById[result.armor.waist]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-    legs: (state.data.armorById[result.armor.legs]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-    charm: (result.charmSlots ?? state.data.charmRankById[result.charmRankId]?.slots ?? []).map((slotSize) => ({ slotSize, decoName: null })),
-  };
-
-  for (const piece of pieceOrder) {
-    slotsByPiece[piece].sort((a, b) => b.slotSize - a.slotSize);
-  }
-
-  const placements = result.placements
-    .map((placement, index) => {
-      const decoration = state.data!.decorationsById[placement.decorationId];
+  for (const [key, id] of Object.entries(fields))
+    if (input[key] !== undefined) $<HTMLInputElement>(id).value = input[key];
+  if (!LOCALES.includes(value("locale")))
+    $<HTMLSelectElement>("locale").value = "en";
+  if (!["off", "owned", "suggest"].includes(value("mode")))
+    $<HTMLSelectElement>("mode").value = "off";
+  for (const [key, id] of [
+    ["aa", "alpha"],
+    ["ag", "gamma"],
+    ["od", "owned-decos"],
+  ])
+    if (input[key] !== undefined)
+      $<HTMLInputElement>(id).checked = input[key] === "1";
+  desired = (input.ds ?? "")
+    .split(",")
+    .map((s) => {
+      const [id, n, opt] = s.split(":");
       return {
-        index,
-        slotSizeUsed: placement.slotSizeUsed,
-        slotReq: decoration?.slotReq ?? placement.slotSizeUsed,
-        decoName: decoration?.name || `Decoration #${placement.decorationId}`,
+        skillId: Number(id),
+        level: Number(n),
+        optional: opt === "optional",
       };
     })
-    .sort(
-      (a, b) =>
-        b.slotSizeUsed - a.slotSizeUsed || b.slotReq - a.slotReq || a.decoName.localeCompare(b.decoName) || a.index - b.index,
+    .filter(
+      (s) =>
+        Number.isInteger(s.skillId) &&
+        s.skillId > 0 &&
+        Number.isInteger(s.level) &&
+        s.level > 0,
     );
-
-  for (const placement of placements) {
-    let assigned = false;
-
-    for (const piece of pieceOrder) {
-      const slot = slotsByPiece[piece].find((candidate) => candidate.decoName === null && candidate.slotSize === placement.slotSizeUsed);
-      if (!slot) {
-        continue;
-      }
-      slot.decoName = placement.decoName;
-      assigned = true;
-      break;
-    }
-
-    if (assigned) {
-      continue;
-    }
-
-    for (const piece of pieceOrder) {
-      const slot = slotsByPiece[piece].find((candidate) => candidate.decoName === null && candidate.slotSize >= placement.slotReq);
-      if (!slot) {
-        continue;
-      }
-      slot.decoName = placement.decoName;
-      break;
-    }
-  }
-
-  const plans = pieceOrder.map((piece) => ({
-    key: piece,
-    label: pieceLabel[piece],
-    name: pieceNames[piece],
-    slots: slotsByPiece[piece],
-  }));
-  pieceSlotPlanCache.set(result.tieKey, plans);
-  return plans;
-}
-
-function renderGearWithDecorations(result: BuildResult): string {
-  const cached = gearRenderCache.get(result.tieKey);
-  if (cached) {
-    return cached;
-  }
-  const plans = buildPieceSlotPlans(result);
-  if (plans.length === 0) {
-    return `<p class="muted">No gear data.</p>`;
-  }
-
-  const html = plans
-    .map((plan) => {
-      const slotRows =
-        plan.slots.length > 0
-          ? plan.slots
-              .map((slot) => {
-                const tierClass = `s${slot.slotSize}`;
-                if (slot.decoName === null) {
-                  return `<li><span class="slot-pill empty ${tierClass}"><span class="slot-tier">S${slot.slotSize}</span><span>Empty</span></span></li>`;
-                }
-                return `<li><span class="slot-pill filled ${tierClass}"><span class="slot-tier">S${slot.slotSize}</span><span>${escText(slot.decoName)}</span></span></li>`;
-              })
-              .join("")
-          : `<li><span class="slot-pill empty no-slot"><span>No slots</span></span></li>`;
-
-      return `
-<details class="gear-accordion" open>
-  <summary class="gear-row gear-row-summary">
-    <span class="gear-row-left"><span class="gear-arrow" aria-hidden="true"></span>${plan.label}</span>
-    <strong>${escText(plan.name)}</strong>
-  </summary>
-  <div class="gear-slots">
-    <ul class="gear-slot-list">${slotRows}</ul>
-  </div>
-</details>`;
-    })
-    .join("");
-  gearRenderCache.set(result.tieKey, html);
-  return html;
-}
-
-function buildHuntFocusFromState(): HuntFocus {
-  const statuses = [...state.huntStatuses];
-  if (!state.huntElement && statuses.length === 0) {
-    return null;
-  }
-  return {
-    element: state.huntElement || undefined,
-    status: statuses.length > 0 ? statuses : undefined,
-  };
-}
-
-function extractLeftoverSlots(result: BuildResult): LeftoverSlot[] {
-  const plans = buildPieceSlotPlans(result);
-  const leftover: LeftoverSlot[] = [];
-  let slotIndex = 1;
-  for (const plan of plans) {
-    for (const slot of plan.slots) {
-      if (slot.decoName === null) {
-        leftover.push({
-          slotIndex,
-          slotLevel: slot.slotSize as SlotSize,
-          pieceLabel: plan.label,
-          pieceName: plan.name,
-        });
-      }
-      slotIndex += 1;
+  selected = new Set(
+    (input.decos ?? "")
+      .split(",")
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0),
+  );
+  counts = numericRecord(input.dc, 0, 99);
+  locks = Object.fromEntries(
+    Object.entries(numericRecord(input.locks, 1, 1000000)).filter(([k]) =>
+      KINDS.includes(k as ArmorKind),
+    ),
+  );
+  exclusions = new Set(idList(input.excluded));
+  overrides = validOverrides(input.overrides);
+  weaponSkills = numericRecord(input.wskills, 1, 99);
+  favorites = new Set(idList(input.favorites));
+  $<HTMLSelectElement>("weapon-set").dataset.initial = input.ws ?? "";
+  $<HTMLSelectElement>("weapon-group").dataset.initial = input.wg ?? "";
+  if (input.charm) {
+    try {
+      owned = normalizeInventory([JSON.parse(input.charm)]);
+      $<HTMLSelectElement>("mode").value = "owned";
+    } catch {
+      status(
+        "Shared talisman could not be read; your saved library was preserved.",
+      );
     }
   }
-  return leftover;
+  if (input.build)
+    linkedBuild = parseJson<SavedBuild | null>(input.build, null);
+  if (input.version) $("data-status").dataset.linkVersion = input.version;
+  $("deco-list").dataset.initial =
+    (input.decos ?? "all") === "all" ? "all" : "selected";
 }
-
-function renderFlexSuggestions(result: BuildResult): string {
-  const cached = flexRenderCache.get(result.tieKey);
-  if (cached) {
-    return cached;
-  }
-  if (!state.data) {
-    return `<p class="muted">No flex suggestion data.</p>`;
-  }
-
-  const leftoverSlots = extractLeftoverSlots(result);
-  if (leftoverSlots.length === 0) {
-    const html = `<p class="muted">No leftover slots available for flex suggestions.</p>`;
-    flexRenderCache.set(result.tieKey, html);
-    return html;
-  }
-
-  const suggestions = suggestFlexDecorations({
-    build: result,
-    leftoverSlots,
-    data: state.data,
-    desiredSkills: state.desired,
-    presetMode: state.flexPresetMode,
-    huntFocus: buildHuntFocusFromState(),
-    allowedDecorationIds: state.useAllDecos ? null : state.selectedDecos,
-  });
-
-  if (suggestions.length === 0) {
-    const html = `<p class="muted">No valid flex suggestions for the current decoration pool.</p>`;
-    flexRenderCache.set(result.tieKey, html);
-    return html;
-  }
-
-  const html = `<div class="flex-suggestion-list">${suggestions
-    .map((suggestion, index) => {
-      const loadoutRows = suggestion.decorationLoadout
-        .map(
-          (entry) =>
-            `<li>Slot ${entry.slotIndex} (${entry.pieceLabel} S${entry.slotLevel}) -> ${escText(entry.decorationName)}</li>`,
+function changed(): void {
+  if (active) return;
+  stale = results.length > 0;
+  pins = [];
+  visibleResults = 10;
+  status(
+    stale
+      ? "Settings changed. Find builds again to apply them."
+      : "Ready when you are.",
+  );
+  renderResults();
+  storeSettings();
+  updateButtons();
+}
+function updateButtons(): void {
+  $<HTMLSelectElement>("locale").disabled = loading || !!active;
+  $<HTMLButtonElement>("optimize").disabled =
+    loading || !!active || !data || !desired.some((s) => !s.optional);
+  $<HTMLButtonElement>("stop").disabled = !active;
+  $<HTMLButtonElement>("refresh-data").disabled = loading || !!active;
+}
+function setBusy(busy: boolean): void {
+  root
+    .querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+    >("input,select,button")
+    .forEach((e) => {
+      if (e.id !== "stop") e.disabled = busy;
+    });
+  $("inventory").toggleAttribute("inert", busy);
+  updateButtons();
+}
+function renderMode(): void {
+  $("mode-help").textContent =
+    value("mode") === "owned"
+      ? "Equips exactly one talisman from your library, including its weapon slot."
+      : value("mode") === "suggest"
+        ? "Explores an unverified sample of hypothetical talismans. These are requirement ideas, not guaranteed legal rolls or farming probabilities."
+        : "Uses one craftable talisman or no talisman. Decorations are fitted during search.";
+  if (value("mode") === "owned") $<HTMLDetailsElement>("inventory").open = true;
+  $("inventory-summary").textContent =
+    `${owned.length} talismans available. Your inventory stays on this device.`;
+}
+function renderSkills(): void {
+  if (!data) return;
+  const q = value("skill-search").normalize("NFKC").toLocaleLowerCase(),
+    kind = value("skill-type");
+  const matching = data.skills.filter(
+    (s) =>
+      (kind === "all" ||
+        kind === s.kind ||
+        (kind === "favorites" && favorites.has(s.id))) &&
+      `${s.name.toLocaleLowerCase()} ${ALIASES[s.id] ?? ""}`.includes(q),
+  );
+  $("skill-options").innerHTML =
+    matching
+      .slice(0, visibleSkills)
+      .map(
+        (s) =>
+          `<div class="skill-choice"><button data-add-skill="${s.id}" ${desired.some((d) => d.skillId === s.id) ? "disabled" : ""}>${esc(s.name)} <small>${esc(s.kind)} · max ${s.maxLevel}</small></button><button data-favorite="${s.id}" aria-label="${favorites.has(s.id) ? "Unfavorite" : "Favorite"} ${attr(s.name)}" aria-pressed="${favorites.has(s.id)}">${favorites.has(s.id) ? "★" : "☆"}</button></div>`,
+      )
+      .join("") || "<p>No matching skills.</p>";
+  $("more-skills").hidden = matching.length <= visibleSkills;
+}
+function renderDesired(): void {
+  if (!data) return;
+  $("desired-list").innerHTML =
+    desired
+      .map((d) => {
+        const s = data!.skillsById[d.skillId];
+        if (!s) return "";
+        return `<article class="target-row"><strong>${esc(s.name)}</strong><div class="level-picker">${Array.from({ length: s.maxLevel }, (_, i) => `<button data-skill-level="${d.skillId}" data-level="${i + 1}" aria-label="${attr(s.name)} level ${i + 1}" aria-pressed="${d.level === i + 1}" class="level-btn ${d.level === i + 1 ? "active" : ""}">${i + 1}</button>`).join("")}</div><label><input type="checkbox" data-optional="${d.skillId}" ${d.optional ? "checked" : ""}/>Preferred</label><button data-remove-skill="${d.skillId}" aria-label="Remove ${attr(s.name)}">Remove</button><details><summary>Effects and activation</summary><p>${esc(s.description)}</p>${Object.entries(
+          s.rankDescriptions,
         )
-        .join("");
-      return `<article class="flex-suggestion-card">
-        <div class="flex-suggestion-header"><strong>Option ${index + 1}</strong><span>Score ${suggestion.score.toFixed(1)}</span></div>
-        <ul class="flex-loadout-list">${loadoutRows}</ul>
-        <p class="muted">${escText(suggestion.explanation)}</p>
-      </article>`;
-    })
-    .join("")}</div>`;
-  flexRenderCache.set(result.tieKey, html);
-  return html;
+          .map(([lv, text]) => `<p>Level ${lv}: ${esc(text)}</p>`)
+          .join("")}</details></article>`;
+      })
+      .join("") ||
+    "<p>No targets yet. Add a skill or try the comfort example.</p>";
+  updateButtons();
 }
-
-function computeBaseScore(result: BuildResult): number {
-  const defenseScore = result.defenseMax * 0.9 + result.defenseBase * 0.15;
-  const slotScore = result.leftoverSlotCapacity * 1.1;
-  const efficiencyPenalty = result.wastedRequestedPoints * 1.4;
-  return defenseScore + slotScore - efficiencyPenalty;
+function usableDecorations() {
+  if (!data) return [];
+  let weapon = false;
+  try {
+    weapon =
+      slots(value("weapon-slots")).length > 0 ||
+      owned.some((c) => !!c.weaponSlot) ||
+      desired.some((d) => data!.skillsById[d.skillId]?.kind === "weapon");
+  } catch {
+    /* Search validates inputs. */
+  }
+  return data.decorations
+    .filter((d) => d.kind === "armor" || (weapon && d.kind === "weapon"))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
 }
-
-function computeTargetDeficitPoints(skillTotals: SkillPoints): {
-  totalMissing: number;
-  missingBySkillId: Record<number, number>;
-} {
-  const missingBySkillId: Record<number, number> = {};
-  let totalMissing = 0;
-  for (const desired of state.desired) {
-    const current = skillTotals[desired.skillId] ?? 0;
-    const missing = Math.max(0, desired.level - current);
-    if (missing > 0) {
-      missingBySkillId[desired.skillId] = missing;
-      totalMissing += missing;
-    }
-  }
-  return { totalMissing, missingBySkillId };
-}
-
-function meetsTargets(skillTotals: SkillPoints): boolean {
-  return state.desired.every((desired) => (skillTotals[desired.skillId] ?? 0) >= desired.level);
-}
-
-function applyCharmToSkillTotals(baseTotals: SkillPoints, charm: CharmSuggestion["charm"] | null): SkillPoints {
-  if (!charm) {
-    return { ...baseTotals };
-  }
-  const merged: SkillPoints = { ...baseTotals };
-  for (const rawSkillId in charm.skills) {
-    const skillId = Number(rawSkillId);
-    const level = charm.skills[rawSkillId] ?? 0;
-    if (!Number.isFinite(skillId) || level <= 0) {
-      continue;
-    }
-    merged[skillId] = (merged[skillId] ?? 0) + level;
-  }
-  return merged;
-}
-
-function buildCharmSummaryFromCharm(charm: CharmSuggestion["charm"] | null): string {
-  if (!charm || !state.data) {
-    return "";
-  }
-  const skillSummary = Object.entries(charm.skills)
-    .map(([skillIdText, level]) => ({ skillId: Number(skillIdText), level }))
-    .filter((entry) => entry.level > 0)
-    .sort((a, b) => b.level - a.level || a.skillId - b.skillId)
-    .map((entry) => {
-      const skillName = state.data!.skillsById[entry.skillId]?.name || `Skill #${entry.skillId}`;
-      return `${skillName}+${entry.level}`;
-    })
-    .join(" ");
-  const slotSummary = charm.slots.join("-");
-  if (!skillSummary) {
-    return slotSummary;
-  }
-  return `${skillSummary} | ${slotSummary}`;
-}
-
-function buildCharmRequirementSummary(suggestion: CharmSuggestion | null): string {
-  return buildCharmSummaryFromCharm(suggestion?.charm ?? null);
-}
-
-function computeCharmCoveragePoints(
-  missingBySkillId: Record<number, number>,
-  charm: CharmSuggestion["charm"] | null,
-): number {
-  if (!charm) {
-    return 0;
-  }
-  let covered = 0;
-  for (const rawSkillId in charm.skills) {
-    const skillId = Number(rawSkillId);
-    const level = charm.skills[rawSkillId] ?? 0;
-    if (!Number.isFinite(skillId) || level <= 0) {
-      continue;
-    }
-    const missing = missingBySkillId[skillId] ?? 0;
-    covered += Math.min(level, Math.max(0, missing));
-  }
-  return covered;
-}
-
-function classifyCharmDependence(
-  baseScore: number,
-  charmBonusScore: number,
-  requiredDeficitPoints: number,
-  coveredByCharmPoints: number,
-): "NONE" | "LOW" | "MED" | "HIGH" {
-  if (requiredDeficitPoints <= 0) {
-    return "NONE";
-  }
-
-  const coverageRatio = coveredByCharmPoints / Math.max(1, requiredDeficitPoints);
-  if (coverageRatio >= 0.6) {
-    return "HIGH";
-  }
-  if (coverageRatio >= 0.25) {
-    return "MED";
-  }
-
-  const scoreRatio = charmBonusScore / Math.max(1, baseScore);
-  if (scoreRatio > 0.15) {
-    return "HIGH";
-  }
-  if (scoreRatio >= 0.05) {
-    return "MED";
-  }
-  return "LOW";
-}
-
-function scoreCharmSlotList(slots: [number, number, number]): number {
-  return slots.reduce((sum, slotSize) => {
-    if (slotSize >= 3) return sum + 1.8;
-    if (slotSize === 2) return sum + 1.25;
-    if (slotSize === 1) return sum + 0.8;
-    return sum;
-  }, 0);
-}
-
-function buildOwnedCharmSuggestions(
-  deficits: { missingBySkillId: Record<number, number> },
-  weights: Record<number, number> | null,
-): CharmSuggestion[] {
-  if (state.ownedCharms.length === 0) {
-    return [];
-  }
-  const suggestions = state.ownedCharms.map((charm) => {
-    let skillScore = 0;
-    const explains: string[] = [];
-    for (const [rawSkillId, rawLevel] of Object.entries(charm.skills)) {
-      const skillId = Number(rawSkillId);
-      const level = Number(rawLevel) || 0;
-      if (!Number.isFinite(skillId) || level <= 0) {
-        continue;
-      }
-      const missing = deficits.missingBySkillId[skillId] ?? 0;
-      const covered = Math.min(Math.max(0, missing), level);
-      if (covered > 0) {
-        const weight = weights?.[skillId] ?? 1;
-        skillScore += covered * weight;
-        const skillName = state.data?.skillsById[skillId]?.name || `Skill #${skillId}`;
-        explains.push(`Covers ${skillName} +${covered}.`);
-      }
-    }
-    const slotScore = scoreCharmSlotList(charm.slots) * 0.6;
-    if (explains.length === 0) {
-      explains.push(`Adds slot pattern ${charm.slots.join("-")}.`);
-    }
-    const score = Math.round((skillScore + slotScore) * 10) / 10;
-    return {
-      charm,
-      score,
-      explains: explains.slice(0, 3),
-    } as CharmSuggestion;
-  });
-
-  suggestions.sort((a, b) => {
-    if (a.score !== b.score) {
-      return b.score - a.score;
-    }
-    const aSummary = buildCharmSummaryFromCharm(a.charm);
-    const bSummary = buildCharmSummaryFromCharm(b.charm);
-    return aSummary.localeCompare(bSummary);
-  });
-
-  return suggestions.slice(0, Math.max(1, state.charmSuggestCount));
-}
-
-function attachCharmMetaToResult(
-  result: BuildResult,
-  targetConfig: { requiredSkills: DesiredSkill[] } | null,
-  weights: Record<number, number> | null,
-): BuildResult {
-  const baseScore = computeBaseScore(result);
-  const deficits = computeTargetDeficitPoints(result.skillTotals);
-  const meetsTargetsBase = deficits.totalMissing === 0;
-
-  if (!state.data || state.charmMode === "off") {
-    return {
-      ...result,
-      baseScore,
-      charmSuggestions: [],
-      suggestedCharms: [],
-      bestSuggestedCharm: null,
-      charmBonusScore: 0,
-      totalScoreWithCharm: baseScore,
-      charmRequirementSummary: "",
-      meetsTargetsBase,
-      meetsTargetsWithBestCharm: meetsTargetsBase,
-      charmDependence: deficits.totalMissing <= 0 ? "NONE" : "LOW",
-      charmDeficitPoints: deficits.totalMissing,
-      charmCoveredPoints: 0,
-    };
-  }
-
-  if (state.charmMode === "owned") {
-    const charmSuggestions = buildOwnedCharmSuggestions(deficits, weights);
-    const bestSuggestedCharm = charmSuggestions[0] ?? null;
-    const charmBonusScore = bestSuggestedCharm?.score ?? 0;
-    const previewTotals = applyCharmToSkillTotals(result.skillTotals, bestSuggestedCharm?.charm ?? null);
-    const meetsTargetsWithBestCharm = meetsTargets(previewTotals);
-    const totalScoreWithCharm = baseScore + charmBonusScore;
-    const coveredByCharmPoints = computeCharmCoveragePoints(
-      deficits.missingBySkillId,
-      bestSuggestedCharm?.charm ?? null,
+function renderDecos(): void {
+  if (!data) return;
+  const all = usableDecorations(),
+    q = value("deco-search").toLocaleLowerCase(),
+    visible = all.filter((d) =>
+      `${d.name} ${d.slotReq} ${Object.keys(d.skills)
+        .map((id) => data!.skillsById[Number(id)]?.name)
+        .join(" ")}`
+        .toLocaleLowerCase()
+        .includes(q),
     );
-    const charmDependence = classifyCharmDependence(
-      baseScore,
-      charmBonusScore,
-      deficits.totalMissing,
-      coveredByCharmPoints,
-    );
-    const charmRequirementSummary = bestSuggestedCharm ? buildCharmRequirementSummary(bestSuggestedCharm) : "";
-    return {
-      ...result,
-      baseScore,
-      charmSuggestions,
-      suggestedCharms: charmSuggestions,
-      bestSuggestedCharm,
-      charmBonusScore,
-      totalScoreWithCharm,
-      charmRequirementSummary,
-      meetsTargetsBase,
-      meetsTargetsWithBestCharm,
-      charmDependence,
-      charmDeficitPoints: deficits.totalMissing,
-      charmCoveredPoints: coveredByCharmPoints,
-    };
-  }
-
-  const shouldSkipDueToNoDeficits =
-    deficits.totalMissing === 0 &&
-    state.hideSuggestionsIfNoDeficits &&
-    !state.showComfortCharmWhenNoDeficits;
-
-  const charmSuggestions = shouldSkipDueToNoDeficits
-    ? []
-    : suggestCharmsForBuild({
-        build: result,
-        data: state.data,
-        targetConfig: targetConfig ?? { requiredSkills: state.desired },
-        weights: weights ?? undefined,
-        options: {
-          suggestCount: state.charmSuggestCount,
-          maxSuggestedSkills: state.charmMaxSuggestedSkills,
-          allowSlotPatterns: state.charmSlotPatterns,
-          maxSkillLevelPerCharmSkill: state.charmMaxSkillLevelPerSkill,
-          suggestSlotForwardWhenComplete: state.showComfortCharmWhenNoDeficits,
-        },
-      });
-
-  const bestSuggestedCharm = charmSuggestions[0] ?? null;
-  const charmBonusScore = bestSuggestedCharm?.score ?? 0;
-  const previewTotals = applyCharmToSkillTotals(result.skillTotals, bestSuggestedCharm?.charm ?? null);
-  const meetsTargetsWithBestCharm = meetsTargets(previewTotals);
-  const totalScoreWithCharm = baseScore + charmBonusScore;
-  const coveredByCharmPoints = computeCharmCoveragePoints(
-    deficits.missingBySkillId,
-    bestSuggestedCharm?.charm ?? null,
-  );
-  const charmDependence = classifyCharmDependence(
-    baseScore,
-    charmBonusScore,
-    deficits.totalMissing,
-    coveredByCharmPoints,
-  );
-  const charmRequirementSummary =
-    bestSuggestedCharm && bestSuggestedCharm.score >= state.minCharmScoreToShow
-      ? buildCharmRequirementSummary(bestSuggestedCharm)
-      : "";
-
-  return {
-    ...result,
-    baseScore,
-    charmSuggestions,
-    suggestedCharms: charmSuggestions,
-    bestSuggestedCharm,
-    charmBonusScore,
-    totalScoreWithCharm,
-    charmRequirementSummary,
-    meetsTargetsBase,
-    meetsTargetsWithBestCharm,
-    charmDependence,
-    charmDeficitPoints: deficits.totalMissing,
-    charmCoveredPoints: coveredByCharmPoints,
-  };
-}
-
-function applyCharmSuggestionsToResults(results: BuildResult[]): BuildResult[] {
-  if (!state.data || state.charmMode === "off") {
-    return results.map((result) => attachCharmMetaToResult(result, null, null));
-  }
-  const targetConfig = { requiredSkills: state.desired };
-  const weights = buildDefaultSkillWeights(state.data, targetConfig);
-  return results.map((result) => attachCharmMetaToResult(result, targetConfig, weights));
-}
-
-function scoreForSorting(result: BuildResult): number {
-  const baseScore = result.baseScore ?? computeBaseScore(result);
-  if (state.charmMode === "suggest" || state.charmMode === "owned") {
-    return result.totalScoreWithCharm ?? baseScore;
-  }
-  return baseScore;
-}
-
-function sortResultsForDisplay(results: BuildResult[]): BuildResult[] {
-  return [...results].sort((a, b) => {
-    const scoreDelta = scoreForSorting(b) - scoreForSorting(a);
-    if (Math.abs(scoreDelta) > 0.000001) {
-      return scoreDelta;
-    }
-    const fallback = compareBuildResults(a, b);
-    if (fallback !== 0) {
-      return fallback;
-    }
-    return a.tieKey.localeCompare(b.tieKey);
-  });
-}
-
-function filterResultsForDisplay(results: BuildResult[]): BuildResult[] {
-  return results.filter((result) => {
-    const meetsBase = result.meetsTargetsBase ?? meetsTargets(result.skillTotals);
-    const meetsWithCharm = result.meetsTargetsWithBestCharm ?? meetsBase;
-    const showBase = state.filterShowMeetsBase;
-    const showWithCharm = state.filterShowMeetsWithBestCharm;
-    const targetPass =
-      (!showBase && !showWithCharm) ||
-      (showBase && meetsBase) ||
-      (showWithCharm && meetsWithCharm);
-    if (!targetPass) {
-      return false;
-    }
-    if (state.filterHideHighCharmDependence && result.charmDependence === "HIGH") {
-      return false;
-    }
-    return true;
-  });
-}
-
-function logTopResultCharmDiagnostics(results: BuildResult[], label: string): void {
-  if ((state.charmMode !== "suggest" && state.charmMode !== "owned") || results.length === 0) {
-    return;
-  }
-  const top = results[0];
-  const baseScore = top.baseScore ?? computeBaseScore(top);
-  const requiredDeficitPoints = top.charmDeficitPoints ?? computeTargetDeficitPoints(top.skillTotals).totalMissing;
-  const coveredByCharmPoints = top.charmCoveredPoints ?? 0;
-  const bestSuggestedCharmScore = top.bestSuggestedCharm?.score ?? 0;
-  const charmBonusScore = top.charmBonusScore ?? bestSuggestedCharmScore;
-  const deficitsCount = requiredDeficitPoints;
-  const hideWhenNoDeficits = state.hideSuggestionsIfNoDeficits;
-  const showComfortWhenNoDeficits = state.showComfortCharmWhenNoDeficits;
-  const suggestionsLength = top.charmSuggestions?.length ?? 0;
-  console.info("[top-result-charm-metrics]", {
-    label,
-    baseScore: Math.round(baseScore * 100) / 100,
-    "bestSuggestedCharm.score": Math.round(bestSuggestedCharmScore * 100) / 100,
-    charmBonusScore: Math.round(charmBonusScore * 100) / 100,
-    requiredDeficitPoints,
-    coveredByCharmPoints,
-    deficitsCount,
-    hideWhenNoDeficits,
-    showComfortWhenNoDeficits,
-    "suggestions.length": suggestionsLength,
-    nearMissEnabled: state.nearMissEnabled,
-    nearMissMaxMissingPoints: state.nearMissMaxMissingPoints,
-    charmDependence: top.charmDependence ?? "NONE",
-    tieKey: top.tieKey,
-  });
-}
-
-function refreshResultsView(): void {
-  if (state.rawResults.length === 0) {
-    state.results = [];
-    return;
-  }
-  const withMeta = applyCharmSuggestionsToResults(state.rawResults);
-  const sorted = sortResultsForDisplay(withMeta);
-  logTopResultCharmDiagnostics(sorted, "pre-filter");
-  const filtered = filterResultsForDisplay(sorted);
-  const effectiveWorkers = Math.max(1, state.expectedWorkers || 1);
-  const limit = Math.max(1, Math.min(MAX_POST_PROCESS_RESULTS, state.resultsPerThread * effectiveWorkers));
-  state.results = filtered.slice(0, limit);
-  logTopResultCharmDiagnostics(state.results, "post-filter");
-}
-
-function refreshCharmSuggestionsForCurrentResults(): void {
-  refreshResultsView();
-}
-
-function getPreviewCharmForResult(result: BuildResult): CharmSuggestion["charm"] | null {
-  const previewCharmId = state.previewCharmByResultKey[result.tieKey];
-  if (!previewCharmId) {
-    return null;
-  }
-  const selected = (result.charmSuggestions ?? []).find((suggestion) => suggestion.charm.id === previewCharmId);
-  return selected?.charm ?? null;
-}
-
-function getDisplayBuildStats(result: BuildResult, previewCharm: CharmSuggestion["charm"] | null): {
-  skillTotals: SkillPoints;
-  leftoverSlotCapacity: number;
-  meetsTargets: boolean;
-} {
-  const skillTotals = applyCharmToSkillTotals(result.skillTotals, previewCharm);
-  const slotBonus = previewCharm ? previewCharm.slots.reduce((sum, value) => sum + value, 0) : 0;
-  const leftoverSlotCapacity = result.leftoverSlotCapacity + slotBonus;
-  return {
-    skillTotals,
-    leftoverSlotCapacity,
-    meetsTargets: meetsTargets(skillTotals),
-  };
-}
-
-function renderCharmSuggestionSkillList(suggestion: CharmSuggestion): string {
-  if (!state.data) {
-    return "";
-  }
-  const entries = Object.entries(suggestion.charm.skills)
-    .map(([skillIdText, level]) => ({ skillId: Number(skillIdText), level }))
-    .filter((entry) => entry.level > 0)
-    .sort((a, b) => b.level - a.level || a.skillId - b.skillId);
-
-  if (entries.length === 0) {
-    return `<span class="muted">No direct skill coverage</span>`;
-  }
-
-  return entries
-    .map((entry) => {
-      const name = state.data!.skillsById[entry.skillId]?.name ?? `Skill #${entry.skillId}`;
-      return `<span class="skill-chip" title="${escAttr(skillTooltip(entry.skillId, entry.level))}">${escText(name)} +${entry.level}</span>`;
-    })
+  $("deco-list").innerHTML = visible
+    .map(
+      (d) =>
+        `<div class="deco-row"><label><input type="checkbox" data-deco="${d.id}" ${selected.has(d.id) ? "checked" : ""}/><span>${esc(d.name)} <small>[${d.slotReq}] ${esc(d.kind)} · ${Object.entries(
+          d.skills,
+        )
+          .map(
+            ([id, n]) =>
+              `${esc(data!.skillsById[Number(id)]?.name ?? id)} +${n}`,
+          )
+          .join(
+            ", ",
+          )}</small></span></label>${checked("owned-decos") ? `<label class="deco-count">Owned<input type="number" min="0" max="99" data-count="${d.id}" value="${counts[d.id] ?? 0}" aria-label="Owned copies of ${attr(d.name)}"/></label>` : ""}</div>`,
+    )
     .join("");
+  $("deco-summary").textContent =
+    `${all.filter((d) => selected.has(d.id)).length}/${all.length} usable types selected; ${visible.length} match your search.`;
 }
-
-function renderCharmDependenceBadge(result: BuildResult): string {
-  if (state.charmMode === "off") {
-    return "";
-  }
-  const level = result.charmDependence ?? "NONE";
-  return `<span class="dependence-badge ${level.toLowerCase()}">Charm dependence: ${level}</span>`;
+function renderEquipment(): void {
+  if (!data) return;
+  $("armor-locks").innerHTML = KINDS.map(
+    (k) =>
+      `<label class="field">Lock ${k}<select data-lock="${k}"><option value="">Any ${k} piece</option>${data!.armorByKind[k].map((p) => `<option value="${p.id}" ${locks[k] === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>`,
+  ).join("");
+  $("excluded").innerHTML = [...exclusions]
+    .map(
+      (id) =>
+        `<button data-include="${id}">Include ${esc(data!.armorById[id]?.name ?? String(id))} again</button>`,
+    )
+    .join("");
+  $<HTMLSelectElement>("override-piece").innerHTML = Object.values(
+    data.armorById,
+  )
+    .map((p) => `<option value="${p.id}">${esc(p.name)}</option>`)
+    .join("");
+  const sets = Object.values(data.armorSetsById),
+    ss = $<HTMLSelectElement>("weapon-set"),
+    gs = $<HTMLSelectElement>("weapon-group"),
+    oldSet = ss.value || ss.dataset.initial || "",
+    oldGroup = gs.value || gs.dataset.initial || "";
+  ss.innerHTML =
+    '<option value="">No weapon set roll</option>' +
+    sets
+      .filter((s) => s.bonusId !== null)
+      .map(
+        (s) =>
+          `<option value="${s.id}">${esc(s.name)} — ${esc(
+            Object.keys(s.bonusRanks[0]?.skills ?? {})
+              .map((id) => data!.skillsById[Number(id)]?.name)
+              .join(", "),
+          )}</option>`,
+      )
+      .join("");
+  const groups = [
+    ...new Map(
+      sets
+        .filter((s) => s.groupBonusId !== null)
+        .map((s) => [s.groupBonusId, s]),
+    ).values(),
+  ];
+  gs.innerHTML =
+    '<option value="">No weapon group roll</option>' +
+    groups
+      .map(
+        (s) =>
+          `<option value="${s.groupBonusId}">${esc(
+            Object.keys(s.groupBonusRanks[0]?.skills ?? {})
+              .map((id) => data!.skillsById[Number(id)]?.name)
+              .join(", "),
+          )}</option>`,
+      )
+      .join("");
+  ss.value = oldSet;
+  gs.value = oldGroup;
+  $<HTMLSelectElement>("weapon-skill").innerHTML = data.skills
+    .filter((s) => s.kind === "weapon")
+    .map((s) => `<option value="${s.id}">${esc(s.name)}</option>`)
+    .join("");
+  $("weapon-skills").innerHTML = Object.entries(weaponSkills)
+    .map(
+      ([id, n]) =>
+        `<button data-remove-weapon="${id}">${esc(data!.skillsById[Number(id)]?.name ?? id)} ${n} · Remove</button>`,
+    )
+    .join("");
+  $("overrides-summary").textContent = Object.entries(overrides)
+    .map(
+      ([id, o]) =>
+        `${data!.armorById[Number(id)]?.name ?? id}: ${o.state}, DEF ${o.defense}, slots ${o.slots.join("-") || "none"}`,
+    )
+    .join("; ");
 }
-
-function renderCharmRequirement(
-  result: BuildResult,
-  previewCharm: CharmSuggestion["charm"] | null,
-  displayStats: { meetsTargets: boolean },
-): string {
-  if (state.charmMode === "off") {
-    return "";
+function effectiveData(): NormalizedData {
+  const next = structuredClone(data!);
+  for (const kind of KINDS)
+    next.armorByKind[kind] = next.armorByKind[kind]
+      .filter((p) => !exclusions.has(p.id))
+      .map((p) => {
+        const o = value("upgrade") === "base" ? undefined : overrides[p.id],
+          piece = o
+            ? {
+                ...p,
+                slots: o.slots,
+                defenseMax: o.defense,
+                upgradeState: "custom" as const,
+              }
+            : p;
+        next.armorById[p.id] = piece;
+        return piece;
+      });
+  return next;
+}
+function makeRequest(): OptimizeWorkerRequest {
+  const next = effectiveData(),
+    pool = value("mode") === "owned" ? inventoryRanks(owned) : undefined;
+  if (value("mode") === "owned" && !pool?.length)
+    throw new Error("Add or import a talisman first.");
+  for (const c of pool ?? [])
+    for (const [id, n] of Object.entries(c.skills))
+      if (
+        !next.skillsById[Number(id)] ||
+        n > next.skillsById[Number(id)].maxLevel ||
+        !["armor", "weapon"].includes(next.skillsById[Number(id)].kind)
+      )
+        throw new Error(
+          `${c.name}: verify unknown skills or levels above the game maximum. Your original inventory was preserved.`,
+        );
+  const request: OptimizeWorkerRequest = {
+    data: next,
+    desiredSkills: desired,
+    allowAlpha: checked("alpha"),
+    allowGamma: checked("gamma"),
+    useAllDecorations: false,
+    allowedDecorationIds: [...selected],
+    decorationCounts: checked("owned-decos") ? counts : undefined,
+    maxResults: integer("result-limit", 1, 100),
+    allowedHeadIds: next.armorByKind.head.map((p) => p.id),
+    charmPool: pool,
+    includeNearMissResults: integer("missing", 0, 12) > 0,
+    maxMissingPoints: integer("missing", 0, 12),
+    armorRank: value("armor-rank"),
+    maxRarity: integer("rarity", 1, 12),
+    armorUpgradeMode: value("upgrade") === "base" ? "base" : "database",
+    armorConstraints: Object.fromEntries(
+      Object.entries(locks).map(([k, id]) => [k, [id]]),
+    ),
+    weaponSlots: slots(value("weapon-slots")),
+    weaponSkills,
+    weaponSetBonusPieces: value("weapon-set")
+      ? { [value("weapon-set")]: 1 }
+      : {},
+    weaponGroupBonusPieces: value("weapon-group")
+      ? { [value("weapon-group")]: 1 }
+      : {},
+    sortMode: value("sort") as OptimizeWorkerRequest["sortMode"],
+  };
+  if (value("mode") === "suggest") {
+    const empty: BuildResult = {
+      armor: { head: 0, chest: 0, arms: 0, waist: 0, legs: 0 },
+      charmRankId: 0,
+      charmName: "",
+      charmSlots: [],
+      placements: [],
+      skillTotals: {},
+      defenseBase: 0,
+      defenseMax: 0,
+      resist: { fire: 0, water: 0, ice: 0, thunder: 0, dragon: 0 },
+      leftoverSlotCapacity: 0,
+      wastedRequestedPoints: 0,
+      tieKey: "template",
+    };
+    const templates = suggestCharmsForBuild({
+      build: empty,
+      data: next,
+      targetConfig: { requiredSkills: desired.filter((s) => !s.optional) },
+      options: { suggestCount: 20 },
+    });
+    request.charmPool = [
+      ...next.charmRanks,
+      ...inventoryRanks(
+        templates.map((t) => ({
+          ...t.charm,
+          name: `Unverified template: ${Object.entries(t.charm.skills)
+            .map(([id, n]) => `${next.skillsById[Number(id)]?.name ?? id} ${n}`)
+            .join(" / ")} [${t.charm.slots.join("-")}]`,
+        })),
+      ),
+    ];
   }
-  const isSuggestMode = state.charmMode === "suggest";
-  const isOwnedMode = state.charmMode === "owned";
-
-  const suggestions = result.charmSuggestions ?? [];
-  const best = result.bestSuggestedCharm ?? null;
-  const noDeficits = (result.charmDeficitPoints ?? 0) === 0;
-
-  if (isOwnedMode && state.ownedCharms.length === 0) {
-    return `<p class="muted">No owned charms loaded. Import JSON in the Owned Charms panel.</p>`;
-  }
-
-  if (isSuggestMode && noDeficits && state.hideSuggestionsIfNoDeficits && !state.showComfortCharmWhenNoDeficits) {
-    return "";
-  }
-  if (!best) {
-    return isOwnedMode
-      ? `<p class="muted">No owned charm improves this build.</p>`
-      : `<p class="muted">No charm suggestions for this build.</p>`;
-  }
-  if (isSuggestMode && best.score < state.minCharmScoreToShow) {
-    return `<p class="muted">No meaningful charm improvements for this build.</p>`;
-  }
-
-  const visibleSuggestions = isSuggestMode
-    ? suggestions.filter((suggestion) => suggestion.score >= state.minCharmScoreToShow)
-    : suggestions;
-  if (visibleSuggestions.length === 0) {
-    return `<p class="muted">No meaningful charm improvements for this build.</p>`;
-  }
-
-  const bestSummary = result.charmRequirementSummary || buildCharmRequirementSummary(best);
-  const expanded = state.expandedCharmSuggestionsByResultKey[result.tieKey] ?? false;
-  const meetsLabel = displayStats.meetsTargets ? "Meets targets" : "Missing targets";
-  const bestPreviewing = previewCharm?.id === best.charm.id;
-  const previewNotice = previewCharm
-    ? `<p class="muted preview-line">Previewing charm: ${escText(buildCharmSummaryFromCharm(previewCharm))} <button type="button" class="tiny-btn" data-charm-action="clear-preview" data-result-key="${escAttr(result.tieKey)}">Clear preview</button></p>`
-    : "";
-
-  const summaryTitle = isOwnedMode ? "Best owned charm:" : "Charm requirement (theoretical):";
-  const summaryLine = `<p class="charm-summary-line"><strong>${summaryTitle}</strong> ${escText(bestSummary)} <span class="muted">(${best.score.toFixed(1)} score)</span></p>`;
-  const toggleRow = `<div class="charm-actions"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${escAttr(result.tieKey)}" data-charm-id="${escAttr(best.charm.id)}">${bestPreviewing ? "Previewing" : "Apply (preview)"}</button><button type="button" class="tiny-btn" data-charm-action="toggle-list" data-result-key="${escAttr(result.tieKey)}">${expanded ? "Hide suggestions" : `Show more (${visibleSuggestions.length})`}</button><span class="target-inline ${displayStats.meetsTargets ? "met" : "missing"}">${meetsLabel}</span></div>`;
-
-  if (!expanded) {
-    return `${summaryLine}${toggleRow}${previewNotice}`;
-  }
-
-  const list = safeJoin(
-    visibleSuggestions.map((suggestion, index) => {
-      const slotText = suggestion.charm.slots.join("-");
-      const explainLines = safeJoin((suggestion.explains ?? []).map((line) => `<li>${escText(line)}</li>`));
-      const isPreviewing = previewCharm?.id === suggestion.charm.id;
-      return `<article class="flex-suggestion-card charm-suggestion-card">
-        <div class="flex-suggestion-header"><strong>Template ${index + 1}</strong><span>Score ${suggestion.score.toFixed(1)}</span></div>
-        <p class="muted">Skills: ${renderCharmSuggestionSkillList(suggestion)}</p>
-        <p class="muted">Slots: <strong>${slotText}</strong> | ${isOwnedMode ? "Owned charm" : "Theoretical only"}</p>
-        <div class="button-row compact"><button type="button" class="tiny-btn" data-charm-action="preview" data-result-key="${escAttr(result.tieKey)}" data-charm-id="${escAttr(suggestion.charm.id)}">${isPreviewing ? "Previewing" : "Apply (preview)"}</button></div>
-        <ul class="flex-loadout-list">${explainLines}</ul>
-      </article>`;
+  if (!request.charmPool)
+    request.charmPool = [
+      {
+        id: 0,
+        charmId: 0,
+        name: "No talisman",
+        level: 0,
+        rarity: 0,
+        skills: {},
+        slots: [],
+      },
+      ...next.charmRanks,
+    ];
+  return request;
+}
+type DisplaySlot = {
+  piece: string;
+  name: string;
+  kind: "armor" | "weapon";
+  index: number;
+  size: SlotSize;
+};
+function pieceSlots(build: BuildResult): DisplaySlot[] {
+  const source = resultData ?? data!,
+    output: DisplaySlot[] = KINDS.flatMap((k) =>
+      (
+        build.armorPieces?.[k]?.slots ??
+        source.armorById[build.armor[k]]?.slots ??
+        []
+      ).map((size, index) => ({
+        piece: k,
+        name:
+          build.armorPieces?.[k]?.name ?? source.armorById[build.armor[k]].name,
+        kind: "armor" as const,
+        index,
+        size,
+      })),
+    );
+  build.charmSlots.forEach((size, index) =>
+    output.push({
+      piece: "charm",
+      name: build.charmName,
+      kind: "armor",
+      index,
+      size,
     }),
   );
-
-  return `${summaryLine}${toggleRow}${previewNotice}<div class="charm-suggestion-list">${list}</div>`;
-}
-
-function renderLazyFlexSuggestions(result: BuildResult): string {
-  const cached = flexRenderCache.get(result.tieKey);
-  const body = cached ?? `<p class="muted">Expand to generate flex suggestions.</p>`;
-  return `<details class="flex-suggestion-lazy" data-flex-result-key="${escAttr(result.tieKey)}">
-    <summary class="flex-suggestion-lazy-summary">Show flex suggestions</summary>
-    <div class="flex-suggestion-lazy-body">${body}</div>
-  </details>`;
-}
-
-function renderResultCard(result: BuildResult, index: number): string {
-  const previewCharm = getPreviewCharmForResult(result);
-  const displayStats = getDisplayBuildStats(result, previewCharm);
-  const scoreLabel = state.charmMode === "suggest" ? "Score (With Charm)" : "Score (Base)";
-  const scoreValue = scoreForSorting(result).toFixed(1);
-  let weaponRollLabel = "Requires weapon set bonus roll";
-  const requiredSetId = result.requiredWeaponSetBonusSetId;
-  if (requiredSetId && state.data) {
-    const requiredSet = state.data.armorSetsById[Number(requiredSetId)];
-    if (requiredSet?.name) {
-      weaponRollLabel = `Requires weapon set bonus roll (${requiredSet.name})`;
-    }
-  }
-  const weaponRollBadge = result.requiresWeaponSetBonusRoll
-    ? `<span class="weapon-roll-pill">${escText(weaponRollLabel)}</span>`
-    : "";
-  return `
-<article class="result-card" data-result-key="${escAttr(result.tieKey)}">
-  <div class="result-header">
-    <h3 class="result-rank"><span class="icon icon-results" aria-hidden="true"></span><span>#${index + 1}</span></h3>
-    <div class="result-header-right">
-      <span class="score-pill">${escText(scoreLabel)} ${scoreValue}</span>
-      <span class="def-pill">DEF ${result.defenseMax}</span>
-      ${state.charmMode === "suggest" && (result.missingRequestedPoints ?? 0) > 0 ? `<span class="missing-pill">Base missing ${result.missingRequestedPoints}</span>` : ""}
-      ${weaponRollBadge}
-      ${renderCharmDependenceBadge(result)}
-    </div>
-  </div>
-
-  <div class="result-columns">
-    <section class="result-block">
-      <h4 class="result-heading result-heading-gear"><span class="icon icon-results" aria-hidden="true"></span><span>Gear</span></h4>
-      <div class="gear-grid">
-        ${renderGearWithDecorations(result)}
-      </div>
-      <div class="stat-grid">
-        <div class="stat-item"><span>Defense</span><strong>${result.defenseBase}/${result.defenseMax}</strong></div>
-        <div class="stat-item stat-item-resists">
-          <span>Resists</span>
-          <strong class="resist-row">
-            <span class="resist-value resist-fire" title="Fire resistance">${result.resist.fire}</span>
-            <span class="resist-value resist-water" title="Water resistance">${result.resist.water}</span>
-            <span class="resist-value resist-ice" title="Ice resistance">${result.resist.ice}</span>
-            <span class="resist-value resist-thunder" title="Thunder resistance">${result.resist.thunder}</span>
-            <span class="resist-value resist-dragon" title="Dragon resistance">${result.resist.dragon}</span>
-          </strong>
-        </div>
-        <div class="stat-item"><span>Leftover Slot Capacity</span><strong>${displayStats.leftoverSlotCapacity}${previewCharm ? " (preview)" : ""}</strong></div>
-      </div>
-    </section>
-
-    <section class="result-block">
-      <h4 class="result-heading result-heading-skills"><span class="icon icon-skills" aria-hidden="true"></span><span>Requested Skills</span></h4>
-      ${requestedSkillChecklist(displayStats.skillTotals)}
-      <h4 class="result-heading result-heading-charms"><span class="icon icon-charm" aria-hidden="true"></span><span>${state.charmMode === "owned" ? "Owned Charms" : "Suggested RNG Charms (Theoretical)"}</span></h4>
-      ${renderCharmRequirement(result, previewCharm, displayStats)}
-      <h4 class="result-heading result-heading-flex"><span class="icon icon-decorations" aria-hidden="true"></span><span>Flex Slot Suggestions</span></h4>
-      ${renderLazyFlexSuggestions(result)}
-    </section>
-  </div>
-
-  <details>
-    <summary>All Skills</summary>
-    <div class="skill-chip-wrap">${skillChips(displayStats.skillTotals)}</div>
-  </details>
-</article>`;
-}
-
-function rerenderResultCardByKey(resultKey: string): void {
-  const index = state.results.findIndex((result) => result.tieKey === resultKey);
-  if (index < 0) {
-    renderResults();
-    return;
-  }
-  const card = Array.from(el.results.querySelectorAll<HTMLElement>("article.result-card")).find(
-    (node) => node.dataset.resultKey === resultKey,
+  build.equippedCharm?.weaponSlots?.forEach((size, index) =>
+    output.push({
+      piece: "charm",
+      name: build.charmName,
+      kind: "weapon",
+      index,
+      size,
+    }),
   );
-  if (!card) {
-    renderResults();
-    return;
-  }
-  card.outerHTML = renderResultCard(state.results[index], index);
+  build.weaponSlots?.forEach((size, index) =>
+    output.push({
+      piece: "weapon",
+      name: "Equipped weapon",
+      kind: "weapon",
+      index,
+      size,
+    }),
+  );
+  return output;
 }
-
+function buildCard(b: BuildResult, index: number): string {
+  const source = resultData ?? data!,
+    missing = b.missingRequestedPoints ?? 0;
+  const gear = KINDS.map((k) => {
+    const p = b.armorPieces?.[k] ?? source.armorById[b.armor[k]];
+    return `<tr><th>${k}</th><td>${esc(p?.name ?? "Unavailable piece")}${p?.upgradeState === "custom" ? " · entered upgrade" : ""}</td><td><button data-lock-result="${index}" data-kind="${k}">Lock</button><button data-exclude="${b.armor[k]}">Exclude</button></td></tr>`;
+  }).join("");
+  const slotRows = pieceSlots(b)
+    .map((s) => {
+      const p = b.placements.find(
+        (p) =>
+          p.piece === s.piece &&
+          p.slotKind === s.kind &&
+          p.slotIndex === s.index,
+      );
+      return `<li>${esc(s.piece)} · ${s.kind} [${s.size}] ${p ? esc(source.decorationsById[p.decorationId]?.name ?? "Unknown jewel") : "Empty"}</li>`;
+    })
+    .join("");
+  const bonuses = Object.entries(b.skillTotals)
+    .filter(
+      ([id, n]) =>
+        n > 0 && ["set", "group"].includes(source.skillsById[Number(id)]?.kind),
+    )
+    .map(([id, n]) => `${source.skillsById[Number(id)].name} ${n}`)
+    .join(" · ");
+  return `<article class="result-card"><h3>Build ${index + 1} · ${missing ? `Missing ${missing} required levels` : "Required skills met"}</h3>${b.charmName.startsWith("Unverified template:") ? '<p class="warning">Hypothetical talisman: legal roll not verified.</p>' : ""}<p>Equipment DEF ${b.defenseMax} · empty slot capacity ${b.leftoverSlotCapacity} · preferred levels ${b.optionalSkillPoints ?? 0}</p><table class="simple-table">${gear}<tr><th>Talisman</th><td colspan="2">${esc(b.charmName)}</td></tr></table><p>${bonuses ? `Active bonuses: ${esc(bonuses)}` : "No active set/group bonus."}</p><div class="target-checklist">${desired
+    .map((d) => {
+      const n = b.skillTotals[d.skillId] ?? 0;
+      return `<span class="skill-chip">${esc(source.skillsById[d.skillId]?.name ?? String(d.skillId))}: ${n}/${d.level} ${d.optional ? "preferred" : n >= d.level ? "met" : "missing"}</span>`;
+    })
+    .join(
+      "",
+    )}</div><details><summary>Decorations and empty slots</summary><ul>${slotRows || "<li>No slots</li>"}</ul></details><details><summary>All skills and equipment stats</summary><p>${Object.entries(
+    b.skillTotals,
+  )
+    .map(([id, n]) => `${esc(source.skillsById[Number(id)]?.name ?? id)} ${n}`)
+    .join(
+      " · ",
+    )}</p><p>Base DEF ${b.defenseBase}; database/entered max DEF ${b.defenseMax}. Resistances: ${Object.entries(
+    b.resist,
+  )
+    .map(([el, n]) => `${el} ${n}`)
+    .join(
+      " · ",
+    )}. Food and skill effects excluded.</p></details><details data-flex="${index}"><summary>Suggestions for leftover armor slots</summary><div class="flex-body">Open to calculate.</div></details><div class="button-row"><button data-pin="${index}">${pins.some((p) => p.tieKey === b.tieKey) ? "Unpin" : "Compare"}</button><button data-save="${index}">Save build</button><button data-export="${index}">Download checklist</button><button data-share="${index}">Share this build</button></div></article>`;
+}
 function renderResults(): void {
-  el.runStatus.textContent = state.runStatus;
-  if (!state.data) {
-    el.results.innerHTML = `<p class="muted">Load data and optimize.</p>`;
-    return;
-  }
-  if (state.optimizing) {
-    el.results.innerHTML = `<p class="muted">Optimizing...</p>`;
-    return;
-  }
-  if (state.results.length === 0) {
-    el.results.innerHTML =
-      state.rawResults.length > 0
-        ? `<p class="muted">No builds match the current charm filters.</p>`
-        : `<p class="muted">No results yet.</p>`;
-    return;
-  }
-  const stats = state.workerStats.length
-    ? `<p class="muted">Workers: ${state.workerStats.map((s, i) => `#${i + 1} ${Math.round(s.durationMs)}ms`).join(" | ")}</p>`
+  $("results").innerHTML = stale
+    ? "<p class='warning'>Results use previous settings. Run the search again before using them.</p>"
+    : results.length
+      ? results.slice(0, visibleResults).map(buildCard).join("")
+      : "<p>Add at least one required skill, then Find builds. If no match is found, lower a target, increase jewel counts, or allow more armor.</p>";
+  $("more-results").hidden = stale || visibleResults >= results.length;
+  $("comparison").innerHTML = pins.length
+    ? `<h3>Pinned comparison</h3><div class="comparison-scroll"><table class="simple-table"><tr><th>Metric</th>${pins.map((_, i) => `<th>Build ${i + 1}</th>`).join("")}</tr>${["charmName", "defenseMax", "leftoverSlotCapacity", "missingRequestedPoints"].map((key) => `<tr><th>${esc(({ charmName: "Talisman", defenseMax: "Equipment defense", leftoverSlotCapacity: "Empty slot capacity", missingRequestedPoints: "Missing required levels" } as Record<string, string>)[key])}</th>${pins.map((p) => `<td>${esc(String(p[key as keyof BuildResult] ?? 0))}</td>`).join("")}</tr>`).join("")}${KINDS.map((k) => `<tr><th>${k}</th>${pins.map((p) => `<td>${esc((resultData ?? data!).armorById[p.armor[k]]?.name ?? "Unknown")}</td>`).join("")}</tr>`).join("")}${desired.map((d) => `<tr><th>${esc(data!.skillsById[d.skillId]?.name ?? String(d.skillId))}</th>${pins.map((p) => `<td>${p.skillTotals[d.skillId] ?? 0}/${d.level}</td>`).join("")}</tr>`).join("")}</table></div>`
     : "";
-  el.results.innerHTML = stats + state.results.map((result, index) => renderResultCard(result, index)).join("");
 }
-
-function refreshDerived(): void {
-  if (!state.data) return;
-  clearResultRenderCaches();
-  for (const decoration of state.data.decorations) {
-    const skillText = Object.entries(decoration.skills)
-      .map(([id, level]) => `${state.data!.skillsById[Number(id)]?.name || `Skill #${id}`} +${level}`)
-      .join(", ");
-    decoLabel[decoration.id] = formatDecorationLabel(decoration, state.data);
-    decoSearch[decoration.id] =
-      `${decoration.name} ${simplifyDecorationDisplayName(decoration.name)} s${decoration.slotReq} ${decoration.kind} ${skillText}`.toLowerCase();
-  }
-  const normalized: DesiredSkill[] = [];
-  const seen = new Set<number>();
-  for (const d of state.desired) {
-    const skill = state.data.skillsById[d.skillId];
-    if (!skill || isWeaponSkillKind(skill.kind) || seen.has(d.skillId)) continue;
-    seen.add(d.skillId);
-    normalized.push({ skillId: d.skillId, level: Math.max(1, Math.min(skill.maxLevel, d.level)) });
-  }
-  state.desired = normalized;
-  state.ownedCharms = reindexOwnedCharms(sanitizeOwnedCharmsForCurrentData(state.ownedCharms));
-  writeOwnedCharmsToStorage(state.ownedCharms);
-  const decorationIdSet = new Set(state.data.decorations.map((decoration) => decoration.id));
-  if (state.useAllDecos && state.selectedDecos.size === 0) {
-    state.selectedDecos = new Set(decorationIdSet);
-  } else {
-    state.selectedDecos = new Set([...state.selectedDecos].filter((id) => decorationIdSet.has(id)));
-  }
-
-  state.useAllDecos = state.data.decorations.length > 0 && state.selectedDecos.size === state.data.decorations.length;
+function renderSaved(): void {
+  $("saved-builds").innerHTML =
+    saved
+      .map(
+        (b, i) =>
+          `<article><strong>${esc(b.name)}</strong> · data ${esc(b.version)} <button data-open-saved="${i}">View</button><button data-delete-saved="${i}">Delete</button><button data-export-saved="${i}">Export JSON</button></article>`,
+      )
+      .join("") || "<p>No saved builds yet.</p>";
 }
-
-type WorkerBase = Omit<OptimizeWorkerRequest, "allowedHeadIds">;
-type WorkerTask = {
-  promise: Promise<OptimizeWorkerDone>;
-  cancel: () => void;
-};
-
-function runWorker(
-  base: WorkerBase,
-  allowedHeadIds: number[],
-  workerIndex: number,
-  onProgress: (progress: OptimizeWorkerProgress) => void,
-): WorkerTask {
-  const worker = new Worker(new URL("./optimizerWorker.ts", import.meta.url), { type: "module" });
-  let settled = false;
-  let rejectPromise: ((error: Error) => void) | null = null;
-
-  const promise = new Promise<OptimizeWorkerDone>((resolve, reject) => {
-    rejectPromise = reject;
-
-    worker.onmessage = (ev: MessageEvent<OptimizeWorkerMessage>) => {
-      const message = ev.data;
-      if (message.type === "progress") {
-        onProgress(message);
-        return;
-      }
-      if (settled) {
-        return;
-      }
-      settled = true;
-      worker.terminate();
-      resolve(message);
-    };
-
-    worker.onerror = (ev) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      worker.terminate();
-      reject(new Error(ev.message || "worker failed"));
-    };
-
-    worker.postMessage({ ...base, allowedHeadIds, workerIndex });
-  });
-
-  const cancel = (): void => {
-    if (settled) {
-      return;
-    }
-    settled = true;
-    worker.terminate();
-    rejectPromise?.(new Error("cancelled"));
-  };
-
-  return { promise, cancel };
-}
-
-function shareUrl(): string {
-  const p = new URLSearchParams();
-  p.set("loc", state.locale);
-  if (state.skillKindFilter !== "all") {
-    p.set("sk", state.skillKindFilter);
-  }
-  if (state.desired.length) p.set("ds", [...state.desired].sort((a, b) => a.skillId - b.skillId).map((d) => `${d.skillId}-${d.level}`).join(","));
-  p.set("aa", state.allowAlpha ? "1" : "0");
-  p.set("ag", state.allowGamma ? "1" : "0");
-  p.set("t", String(state.threads));
-  p.set("r", String(state.resultsPerThread));
-  if (state.charmMode !== "off") {
-    p.set("cm", state.charmMode);
-  }
-  if (state.charmSuggestCount !== DEFAULT_CHARM_SUGGESTION_OPTIONS.suggestCount) {
-    p.set("sc", String(state.charmSuggestCount));
-  }
-  if (state.charmMaxSuggestedSkills !== DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSuggestedSkills) {
-    p.set("mss", String(state.charmMaxSuggestedSkills));
-  }
-  if (state.charmMaxSkillLevelPerSkill !== DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSkillLevelPerCharmSkill) {
-    p.set("msl", String(state.charmMaxSkillLevelPerSkill));
-  }
-  if (!state.nearMissEnabled) {
-    p.set("nm", "0");
-  }
-  if (state.nearMissMaxMissingPoints !== DEFAULT_NEAR_MISS_MAX_MISSING_POINTS) {
-    p.set("nmm", String(state.nearMissMaxMissingPoints));
-  }
-  if (Math.abs(state.minCharmScoreToShow - 1) > 0.0001) {
-    p.set("mcs", state.minCharmScoreToShow.toFixed(1));
-  }
-  if (!state.hideSuggestionsIfNoDeficits) {
-    p.set("hnd", "0");
-  }
-  if (state.showComfortCharmWhenNoDeficits) {
-    p.set("scn", "1");
-  }
-  const slotPatternText = serializeSlotPatterns(state.charmSlotPatterns);
-  const defaultSlotPatternText = serializeSlotPatterns(DEFAULT_CHARM_SLOT_PATTERNS);
-  if (slotPatternText !== defaultSlotPatternText) {
-    p.set("sp", slotPatternText);
-  }
-  const defaultFilterSettings = defaultFiltersForCharmMode(state.charmMode);
-  if (state.filterShowMeetsBase !== defaultFilterSettings.showMeetsBase) {
-    p.set("fb", state.filterShowMeetsBase ? "1" : "0");
-  }
-  if (state.filterShowMeetsWithBestCharm !== defaultFilterSettings.showMeetsWithBestCharm) {
-    p.set("fw", state.filterShowMeetsWithBestCharm ? "1" : "0");
-  }
-  if (state.filterHideHighCharmDependence) {
-    p.set("fh", "1");
-  }
-  const selected = [...state.selectedDecos].sort((a, b) => a - b);
-  p.set("decos", state.useAllDecos ? "all" : selected.length > 0 ? selected.join(",") : "none");
-  if (state.flexPresetMode !== "auto") {
-    p.set("fp", state.flexPresetMode);
-  }
-  if (state.huntElement) {
-    p.set("he", state.huntElement);
-  }
-  if (state.huntStatuses.size > 0) {
-    p.set("hs", [...state.huntStatuses].sort().join(","));
-  }
-  if (!state.allowWeaponSetBonusRoll) {
-    p.set("awr", "0");
-  }
-  const query = p.toString();
-  const shareParams = Object.fromEntries(p.entries());
-  const hashPayload = encodeShareStateV2(shareParams);
-  return `${window.location.origin}${window.location.pathname}?${query}#s2=${hashPayload}`;
-}
-
-async function load(force: boolean): Promise<void> {
-  state.loading = true;
-  state.dataError = "";
-  rerender();
-  try {
-    const loaded = await loadOptimizerData(state.locale, force);
-    state.data = loaded.data;
-    state.dataSource = loaded.source;
-    refreshDerived();
-  } catch (error) {
-    state.data = null;
-    state.dataError = `Load failed: ${error instanceof Error ? error.message : "unknown error"}`;
-  } finally {
-    state.loading = false;
-    rerender();
-  }
-}
-
-function cancelOptimization(): void {
-  if (!state.optimizing) {
-    return;
-  }
-  state.cancelRequested = true;
-  for (const cancel of state.activeWorkerCancels) {
-    cancel();
-  }
-  state.activeWorkerCancels = [];
-  state.optimizing = false;
-  state.runStatus = "Optimization cancelled.";
-  flushProgressRender();
-  rerender();
-}
-
-async function optimize(): Promise<void> {
-  if (!state.data) return;
-  if (!state.desired.length) {
-    state.runStatus = "Add at least one desired skill.";
-    state.rawResults = [];
-    state.results = [];
-    rerender();
-    return;
-  }
-  const heads = state.data.armorByKind.head.filter(armorAllowed).map((p) => p.id);
-  if (!heads.length) {
-    state.runStatus = "No head armor remains after alpha/gamma filters.";
-    state.rawResults = [];
-    state.results = [];
-    rerender();
-    return;
-  }
-  const threads = Math.max(1, Math.min(state.threads, MAX_THREADS, heads.length));
-  const threadCapApplied = threads < state.threads;
-  const chunks: number[][] = Array.from({ length: threads }, () => []);
-  heads.forEach((id, i) => chunks[i % threads].push(id));
-  const workerChunks = chunks.filter((chunk) => chunk.length > 0);
-  const started = performance.now();
-  state.cancelRequested = false;
-  state.optimizing = true;
-  if (progressRenderTimer !== null) {
-    window.clearTimeout(progressRenderTimer);
-    progressRenderTimer = null;
-  }
-  lastProgressRenderedAt = 0;
-  state.expectedWorkers = workerChunks.length;
-  state.workerProgressByIndex = {};
-  state.activeWorkerCancels = [];
-  state.runStatus = threadCapApplied
-    ? `Running ${workerChunks.length} workers... (limited by available work chunks from ${state.threads})`
-    : `Running ${workerChunks.length} workers...`;
-  state.rawResults = [];
-  state.results = [];
-  state.workerStats = [];
-  state.previewCharmByResultKey = {};
-  state.expandedCharmSuggestionsByResultKey = {};
-  clearResultRenderCaches();
-  rerender();
-  try {
-    const base: WorkerBase = {
-      data: state.data,
-      desiredSkills: state.desired,
-      allowAlpha: state.allowAlpha,
-      allowGamma: state.allowGamma,
-      weaponSetBonusPieces: resolveWeaponSetBonusPiecesForRequest(
-        state.data,
-        state.desired,
-        state.allowWeaponSetBonusRoll,
-        AUTO_WEAPON_SET_BONUS_SET_ID,
-      ),
-      useAllDecorations: state.useAllDecos,
-      allowedDecorationIds: state.useAllDecos ? [] : [...state.selectedDecos].sort((a, b) => a - b),
-      maxResults: state.resultsPerThread,
-      includeNearMissResults: (state.charmMode === "suggest" || state.charmMode === "owned") && state.nearMissEnabled,
-      maxMissingPoints:
-        (state.charmMode === "suggest" || state.charmMode === "owned") && state.nearMissEnabled
-          ? state.nearMissMaxMissingPoints
-          : 0,
-    };
-    const tasks = workerChunks.map((chunk, workerIndex) => {
-      const task = runWorker(base, chunk, workerIndex, (progress) => {
-        state.workerProgressByIndex[workerIndex] = progress;
-        if (!state.optimizing) {
-          return;
-        }
-        const aggregated = aggregateProgress();
-        if (aggregated.totalCandidates > 0) {
-          const percent = formatPercent(aggregated.evaluatedCandidates, aggregated.totalCandidates);
-          state.runStatus = threadCapApplied
-            ? `Running ${state.expectedWorkers} workers... ${percent} (work-chunk limited)`
-            : `Running ${state.expectedWorkers} workers... ${percent}`;
-        } else {
-          state.runStatus = threadCapApplied
-            ? `Running ${state.expectedWorkers} workers... (work-chunk limited)`
-            : `Running ${state.expectedWorkers} workers...`;
-        }
-        scheduleProgressRender();
-      });
-      state.activeWorkerCancels.push(task.cancel);
-      return task.promise;
-    });
-
-    const responses = await Promise.all(tasks);
-    if (state.cancelRequested) {
-      return;
-    }
-    state.workerStats = responses.map((r) => r.stats);
-    const merged = responses.flatMap((r) => r.results).sort(compareBuildResults);
-    const limit = Math.min(MAX_POST_PROCESS_RESULTS, state.resultsPerThread * responses.length);
-    state.rawResults = merged.slice(0, limit);
-    refreshResultsView();
-    state.runStatus = state.results.length
-      ? `Found ${state.results.length} builds in ${Math.round(performance.now() - started)} ms.`
-      : `No valid builds found in ${Math.round(performance.now() - started)} ms.`;
-  } catch (error) {
-    if (!state.cancelRequested) {
-      state.runStatus = `Optimization failed: ${error instanceof Error ? error.message : "unknown error"}`;
-    }
-  } finally {
-    state.activeWorkerCancels = [];
-    if (!state.cancelRequested) {
-      state.optimizing = false;
-    }
-    flushProgressRender();
-    rerender();
-  }
-}
-
-function refreshAndRenderResults(): void {
-  refreshCharmSuggestionsForCurrentResults();
-  renderResults();
-}
-
-type QuickPreset = "starter-realistic" | "starter-guidance" | "advanced-theorycraft" | "advanced-owned";
-
-function applyPreset(preset: QuickPreset): void {
-  state.allowAlpha = true;
-  state.allowGamma = true;
-  state.useAllDecos = true;
-  state.selectedDecos = state.data ? new Set(state.data.decorations.map((decoration) => decoration.id)) : new Set<number>();
-  state.charmMode = "off";
-  state.nearMissEnabled = false;
-  state.nearMissMaxMissingPoints = DEFAULT_NEAR_MISS_MAX_MISSING_POINTS;
-  state.filterShowMeetsBase = true;
-  state.filterShowMeetsWithBestCharm = false;
-  state.filterHideHighCharmDependence = false;
-
-  if (preset === "starter-guidance") {
-    state.charmMode = "suggest";
-    state.nearMissEnabled = true;
-    state.nearMissMaxMissingPoints = 2;
-    state.filterShowMeetsBase = true;
-    state.filterShowMeetsWithBestCharm = true;
-    state.filterHideHighCharmDependence = true;
-    state.runStatus = "Applied Starter With Guidance settings. Re-run Optimize to apply.";
-  } else if (preset === "advanced-theorycraft") {
-    state.charmMode = "suggest";
-    state.nearMissEnabled = true;
-    state.nearMissMaxMissingPoints = 5;
-    state.filterShowMeetsBase = true;
-    state.filterShowMeetsWithBestCharm = true;
-    state.filterHideHighCharmDependence = false;
-    state.runStatus = "Applied RNG Theorycraft settings. Re-run Optimize to apply.";
-  } else if (preset === "advanced-owned") {
-    state.charmMode = "owned";
-    state.nearMissEnabled = true;
-    state.nearMissMaxMissingPoints = 3;
-    state.filterShowMeetsBase = true;
-    state.filterShowMeetsWithBestCharm = true;
-    state.filterHideHighCharmDependence = false;
-    state.runStatus = "Applied Owned Validation settings. Import owned charms if needed, then re-run Optimize.";
-  } else {
-    state.runStatus = "Applied Starter Realistic settings. Re-run Optimize to apply.";
-  }
-
-  state.previewCharmByResultKey = {};
-  state.expandedCharmSuggestionsByResultKey = {};
-  clearFlexRenderCache();
-  refreshCharmSuggestionsForCurrentResults();
-  rerender();
-}
-
-function reindexOwnedCharms(charms: Charm[]): Charm[] {
-  return charms.map((charm, index) => ({
-    ...charm,
-    id: `owned-${index + 1}`,
-    weaponSlot: 0,
-  }));
-}
-
-function updateOwnedCharms(next: Charm[], statusMessage?: string): void {
-  state.ownedCharms = reindexOwnedCharms(next);
-  writeOwnedCharmsToStorage(state.ownedCharms);
-  state.previewCharmByResultKey = {};
-  state.expandedCharmSuggestionsByResultKey = {};
-  if (statusMessage) {
-    state.runStatus = statusMessage;
-  }
-  refreshAndRenderResults();
-}
-
-function sanitizeOwnedCharmsForCurrentData(charms: Charm[]): Charm[] {
-  return charms.map((charm) => {
-    const filteredSkills: Record<string, number> = {};
-    for (const [rawSkillId, rawLevel] of Object.entries(charm.skills)) {
-      const skillId = Number(rawSkillId);
-      const level = Number(rawLevel) || 0;
-      if (!Number.isFinite(skillId) || level <= 0) {
-        continue;
-      }
-      if (!isCharmRollableSkillId(skillId)) {
-        continue;
-      }
-      filteredSkills[String(skillId)] = level;
-    }
-    return {
-      ...charm,
-      skills: filteredSkills,
-    };
-  });
-}
-
-el.locale.addEventListener("change", () => {
-  state.locale = el.locale.value;
-  state.rawResults = [];
-  state.results = [];
-  state.previewCharmByResultKey = {};
-  state.expandedCharmSuggestionsByResultKey = {};
-  clearResultRenderCaches();
-  load(false).catch(() => undefined);
-});
-el.refreshData.addEventListener("click", () => {
-  clearResultRenderCaches();
-  clearCachedLocale(state.locale);
-  load(true).catch(() => undefined);
-});
-el.skillSearch.addEventListener("input", () => {
-  state.skillSearch = el.skillSearch.value;
-  renderSkillList();
-});
-el.skillKindFilter.addEventListener("change", () => {
-  const value = el.skillKindFilter.value as SkillKindFilter;
-  state.skillKindFilter = validSkillKindFilters.includes(value) ? value : "all";
-  renderSkillList();
-});
-el.addSkill.addEventListener("click", () => {
-  if (!state.data) return;
-  const option = el.skillList.selectedOptions[0];
-  const id = Number.parseInt(option?.value || "", 10);
-  if (Number.isNaN(id) || state.desired.some((d) => d.skillId === id)) return;
-  if (!isSelectableRequestedSkillId(id)) return;
-  const max = state.data.skillsById[id]?.maxLevel || 1;
-  state.desired.push({ skillId: id, level: Math.min(1, max) });
-  clearFlexRenderCache();
-  renderDesired();
-});
-el.skillList.addEventListener("dblclick", () => el.addSkill.click());
-el.desiredList.addEventListener("click", (ev) => {
-  const t = ev.target as HTMLElement;
-  if (!(t instanceof HTMLButtonElement)) return;
-
-  if (t.classList.contains("remove")) {
-    const id = Number.parseInt(t.dataset.skillId || "", 10);
-    state.desired = state.desired.filter((d) => d.skillId !== id);
-    clearFlexRenderCache();
-    renderDesired();
-    return;
-  }
-
-  if (!t.classList.contains("level-btn") || !state.data) {
-    return;
-  }
-  const skillId = Number.parseInt(t.dataset.skillId || "", 10);
-  const nextLevel = Number.parseInt(t.dataset.level || "", 10);
-  if (Number.isNaN(skillId) || Number.isNaN(nextLevel)) {
-    return;
-  }
-  const skill = state.data.skillsById[skillId];
-  if (!skill) {
-    return;
-  }
-  const clampedLevel = Math.max(1, Math.min(skill.maxLevel, nextLevel));
-  state.desired = state.desired.map((desired) =>
-    desired.skillId === skillId ? { skillId, level: clampedLevel } : desired,
-  );
-  clearFlexRenderCache();
-  renderDesired();
-});
-el.decoSearch.addEventListener("input", () => {
-  state.decoSearch = el.decoSearch.value;
-  renderDecoList();
-});
-el.decoAll.addEventListener("click", () => {
-  if (!state.data) return;
-  state.useAllDecos = true;
-  state.selectedDecos = new Set(state.data.decorations.map((d) => d.id));
-  clearFlexRenderCache();
-  renderDecoList();
-});
-el.decoNone.addEventListener("click", () => {
-  state.useAllDecos = false;
-  state.selectedDecos = new Set<number>();
-  clearFlexRenderCache();
-  renderDecoList();
-});
-el.decoList.addEventListener("change", () => {
-  if (!state.data) return;
-  state.useAllDecos = false;
-  for (const option of el.decoList.options) {
-    const id = Number.parseInt(option.value, 10);
-    if (Number.isNaN(id)) continue;
-    if (option.selected) state.selectedDecos.add(id);
-    else state.selectedDecos.delete(id);
-  }
-  state.useAllDecos = state.selectedDecos.size === state.data.decorations.length;
-  clearFlexRenderCache();
-  renderDecoList();
-});
-el.applyBeginnerRealistic.addEventListener("click", () => applyPreset("starter-realistic"));
-el.applyBeginnerGuidance.addEventListener("click", () => applyPreset("starter-guidance"));
-el.applyAdvancedTheorycraft.addEventListener("click", () => applyPreset("advanced-theorycraft"));
-el.applyAdvancedOwned.addEventListener("click", () => applyPreset("advanced-owned"));
-el.allowAlpha.addEventListener("change", () => (state.allowAlpha = el.allowAlpha.checked));
-el.allowGamma.addEventListener("change", () => (state.allowGamma = el.allowGamma.checked));
-el.threads.addEventListener("change", () => (state.threads = clampInt(el.threads.value, DEFAULT_THREADS, 1, MAX_THREADS)));
-el.resultsPerThread.addEventListener("change", () => {
-  state.resultsPerThread = clampInt(el.resultsPerThread.value, DEFAULT_RESULTS, 1, MAX_RESULTS);
-  refreshAndRenderResults();
-});
-el.charmMode.addEventListener("change", () => {
-  const value = el.charmMode.value as CharmMode;
-  state.charmMode = validCharmModes.includes(value) ? value : "off";
-  const defaults = defaultFiltersForCharmMode(state.charmMode);
-  state.filterShowMeetsBase = defaults.showMeetsBase;
-  state.filterShowMeetsWithBestCharm = defaults.showMeetsWithBestCharm;
-  if (state.charmMode !== "suggest") {
-    state.filterHideHighCharmDependence = false;
-  }
-  state.previewCharmByResultKey = {};
-  state.expandedCharmSuggestionsByResultKey = {};
-  refreshCharmSuggestionsForCurrentResults();
-  rerender();
-});
-el.allowWeaponSetBonusRoll.addEventListener("change", () => {
-  state.allowWeaponSetBonusRoll = el.allowWeaponSetBonusRoll.checked;
-  state.runStatus = "Weapon set bonus setting changed. Re-run Optimize to apply.";
-  rerender();
-});
-el.charmSuggestCount.addEventListener("change", () => {
-  state.charmSuggestCount = clampInt(
-    el.charmSuggestCount.value,
-    DEFAULT_CHARM_SUGGESTION_OPTIONS.suggestCount,
-    1,
-    20,
-  );
-  refreshAndRenderResults();
-});
-el.charmMaxSkills.addEventListener("change", () => {
-  state.charmMaxSuggestedSkills = clampInt(
-    el.charmMaxSkills.value,
-    DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSuggestedSkills,
-    1,
-    12,
-  );
-  refreshAndRenderResults();
-});
-el.charmSkillCap.addEventListener("change", () => {
-  state.charmMaxSkillLevelPerSkill = clampInt(
-    el.charmSkillCap.value,
-    DEFAULT_CHARM_SUGGESTION_OPTIONS.maxSkillLevelPerCharmSkill,
-    1,
-    7,
-  );
-  refreshAndRenderResults();
-});
-el.charmSlotPatterns.addEventListener("change", () => {
-  const fallback = DEFAULT_CHARM_SLOT_PATTERNS;
-  state.charmSlotPatternsText = el.charmSlotPatterns.value.trim() || serializeSlotPatterns(fallback);
-  state.charmSlotPatterns = parseSlotPatterns(state.charmSlotPatternsText, fallback);
-  state.charmSlotPatternsText = serializeSlotPatterns(state.charmSlotPatterns);
-  refreshAndRenderResults();
-});
-el.nearMissEnabled.addEventListener("change", () => {
-  state.nearMissEnabled = el.nearMissEnabled.checked;
-  state.runStatus = "Near-miss solver setting changed. Re-run Optimize to apply.";
-  rerender();
-});
-el.nearMissMaxMissing.addEventListener("change", () => {
-  state.nearMissMaxMissingPoints = clampInt(
-    el.nearMissMaxMissing.value,
-    DEFAULT_NEAR_MISS_MAX_MISSING_POINTS,
-    1,
-    12,
-  );
-  state.runStatus = "Near-miss solver setting changed. Re-run Optimize to apply.";
-  rerender();
-});
-el.charmMinScore.addEventListener("change", () => {
-  state.minCharmScoreToShow = clampFloat(el.charmMinScore.value, 1, 0, 100);
-  refreshAndRenderResults();
-});
-el.charmHideNoDeficit.addEventListener("change", () => {
-  state.hideSuggestionsIfNoDeficits = el.charmHideNoDeficit.checked;
-  refreshAndRenderResults();
-});
-el.charmShowComfort.addEventListener("change", () => {
-  state.showComfortCharmWhenNoDeficits = el.charmShowComfort.checked;
-  refreshAndRenderResults();
-});
-el.filterMeetsBase.addEventListener("change", () => {
-  state.filterShowMeetsBase = el.filterMeetsBase.checked;
-  refreshAndRenderResults();
-});
-el.filterMeetsWithCharm.addEventListener("change", () => {
-  state.filterShowMeetsWithBestCharm = el.filterMeetsWithCharm.checked;
-  refreshAndRenderResults();
-});
-el.filterHideHighDependence.addEventListener("change", () => {
-  state.filterHideHighCharmDependence = el.filterHideHighDependence.checked;
-  refreshAndRenderResults();
-});
-el.ownedCharmsImport.addEventListener("click", () => {
-  try {
-    const parsed = parseOwnedCharmsJsonInput(el.ownedCharmsJson.value.trim());
-    updateOwnedCharms(parsed, `Imported ${parsed.length} owned charms.`);
-  } catch (error) {
-    state.runStatus = `Owned charm import failed: ${error instanceof Error ? error.message : "invalid JSON"}`;
-    rerender();
-  }
-});
-el.ownedCharmsExport.addEventListener("click", async () => {
-  const text = serializeOwnedCharmsJson(state.ownedCharms, true);
-  el.ownedCharmsJson.value = text;
+async function copy(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-    state.runStatus = `Exported ${state.ownedCharms.length} owned charms (copied to clipboard).`;
+    status("Link copied.");
   } catch {
-    state.runStatus = `Exported ${state.ownedCharms.length} owned charms to text box.`;
+    status(text);
   }
-  rerender();
+}
+function share(build?: BuildResult): string {
+  const p = settings();
+  if (build) {
+    p.build = JSON.stringify({
+      id: "shared",
+      name: "Shared build",
+      locale: data!.locale,
+      version: data!.version,
+      build,
+    });
+    if (build.equippedCharm)
+      p.charm = JSON.stringify({
+        name: build.charmName,
+        skills: build.equippedCharm.skills,
+        slots: [...build.charmSlots, 0, 0, 0].slice(0, 3),
+        weaponSlot: build.equippedCharm.weaponSlots?.[0] ?? 0,
+      });
+  }
+  const encoded = encodeShareStateV2(p);
+  if (encoded.length > 32000)
+    throw new Error("Link too large. Export JSON instead.");
+  return `${location.origin}${location.pathname}#s2=${encoded}`;
+}
+function showSaved(build: SavedBuild): void {
+  if (
+    !data ||
+    !isSavedBuild(build) ||
+    !Array.isArray(build.build.placements) ||
+    !Array.isArray(build.build.charmSlots) ||
+    !build.build.resist ||
+    !build.build.skillTotals ||
+    !KINDS.every((k) => data!.armorById[build.build.armor[k]])
+  ) {
+    status(
+      "This saved build references equipment unavailable in the current database.",
+    );
+    return;
+  }
+  resultData = effectiveData();
+  results = [build.build];
+  stale = false;
+  pins = [];
+  renderResults();
+  status(
+    build.version === data.version
+      ? `Viewing ${build.name}.`
+      : `Viewing ${build.name} from a different database. Re-run before relying on it.`,
+  );
+}
+async function load(force = false): Promise<void> {
+  if (active) return;
+  loading = true;
+  updateButtons();
+  $("data-status").textContent = "Loading equipment…";
+  try {
+    const loaded = await loadOptimizerData(value("locale") || "en", force);
+    data = loaded.data;
+    desired = desired
+      .filter((d) => data!.skillsById[d.skillId])
+      .map((d) => ({
+        ...d,
+        level: Math.min(d.level, data!.skillsById[d.skillId].maxLevel),
+      }));
+    if ($("deco-list").dataset.initial === "all")
+      selected = new Set(data.decorations.map((d) => d.id));
+    $("deco-list").dataset.initial = "selected";
+    const source =
+      loaded.source === "network"
+        ? "Fresh network data"
+        : loaded.source === "cache-fallback"
+          ? "Cached fallback: refresh failed"
+          : "Cached data";
+    $("data-status").textContent =
+      `${source} · database ${data.version} · fetched ${new Date(data.fetchedAt).toLocaleString()}${$("data-status").dataset.linkVersion && $("data-status").dataset.linkVersion !== data.version ? " · shared link uses different data" : ""}`;
+    $("coverage").textContent =
+      `${data.skills.length} skills, ${Object.keys(data.armorById).length} pieces, ${data.decorations.length} decorations. Equipment counts do not certify complete patch coverage.`;
+    renderMode();
+    renderEquipment();
+    renderSkills();
+    renderDesired();
+    renderDecos();
+    renderSaved();
+    if (linkedBuild) {
+      showSaved(linkedBuild);
+      linkedBuild = null;
+    } else renderResults();
+  } catch (e) {
+    $("data-status").textContent =
+      `Load failed: ${e instanceof Error ? e.message : e}. Retry Refresh data.`;
+    status("Equipment data unavailable. Your inventory was preserved.");
+  } finally {
+    loading = false;
+    updateButtons();
+  }
+}
+async function search(): Promise<void> {
+  if (active || !data) return;
+  let request: OptimizeWorkerRequest;
+  try {
+    request = makeRequest();
+  } catch (e) {
+    status(e instanceof Error ? e.message : String(e));
+    return;
+  }
+  if (!desired.some((s) => !s.optional)) {
+    status("Add at least one required skill.");
+    return;
+  }
+  const id = ++runId;
+  resultData = request.data;
+  stale = false;
+  pins = [];
+  results = [];
+  renderResults();
+  storeSettings();
+  $("progress").removeAttribute("value");
+  const started = performance.now();
+  let last = 0;
+  active = startSearch(request, integer("workers", 1, 4), (visited, found) => {
+    if (id !== runId) return;
+    const now = performance.now();
+    if (now - last < 150) return;
+    last = now;
+    status(
+      `Searching · ${Math.round((now - started) / 1000)}s · ${visited.toLocaleString()} branches visited · ${found.toLocaleString()} feasible candidates. Pruned branches are skipped.`,
+    );
+  });
+  setBusy(true);
+  status("Searching for builds…");
+  try {
+    const output = await active.promise;
+    if (id !== runId) return;
+    results = output.results;
+    visibleResults = 10;
+    status(
+      results.length
+        ? `${results.length} builds found in ${(output.durationMs / 1000).toFixed(2)}s.${value("mode") === "suggest" ? " Hypothetical rolls remain unverified." : ""}`
+        : "No builds satisfy these constraints. Check levels, quantities, locks and exclusions; allow a missing level to inspect alternatives.",
+    );
+  } catch (e) {
+    if (id === runId) status(e instanceof Error ? e.message : String(e));
+  } finally {
+    if (id === runId) {
+      active = null;
+      $("progress").setAttribute("value", "1");
+      setBusy(false);
+      renderResults();
+    }
+  }
+}
+
+restoreSettings();
+renderMode();
+renderSaved();
+$("skill-search").addEventListener("input", () => {
+  visibleSkills = 20;
+  renderSkills();
 });
-el.ownedCharmsClear.addEventListener("click", () => {
-  updateOwnedCharms([], "Owned charms cleared.");
+$("skill-type").addEventListener("change", () => {
+  visibleSkills = 20;
+  renderSkills();
 });
-el.results.addEventListener("click", (event) => {
-  const target = event.target as HTMLElement | null;
-  const button = target?.closest<HTMLButtonElement>("button[data-charm-action]");
-  if (!button) {
-    return;
-  }
-  const action = button.dataset.charmAction;
-  const resultKey = button.dataset.resultKey;
-  if (!action || !resultKey) {
-    return;
-  }
-  if (action === "toggle-list") {
-    const current = state.expandedCharmSuggestionsByResultKey[resultKey] ?? false;
-    state.expandedCharmSuggestionsByResultKey[resultKey] = !current;
-    rerenderResultCardByKey(resultKey);
-    return;
-  }
-  if (action === "clear-preview") {
-    delete state.previewCharmByResultKey[resultKey];
-    rerenderResultCardByKey(resultKey);
-    return;
-  }
-  if (action !== "preview") {
-    return;
-  }
-  const charmId = button.dataset.charmId;
-  if (!charmId) {
-    return;
-  }
-  const result = state.results.find((entry) => entry.tieKey === resultKey);
-  if (!result) {
-    return;
-  }
-  const hasCharm = (result.charmSuggestions ?? []).some((suggestion) => suggestion.charm.id === charmId);
-  if (!hasCharm) {
-    return;
-  }
-  const current = state.previewCharmByResultKey[resultKey] ?? null;
-  if (current === charmId) {
-    delete state.previewCharmByResultKey[resultKey];
-  } else {
-    state.previewCharmByResultKey[resultKey] = charmId;
-  }
-  rerenderResultCardByKey(resultKey);
+$("more-skills").addEventListener("click", () => {
+  visibleSkills += 20;
+  renderSkills();
 });
-el.results.addEventListener(
+$("skill-options").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!b || active) return;
+  if (b.dataset.favorite) {
+    const id = Number(b.dataset.favorite);
+    favorites.has(id) ? favorites.delete(id) : favorites.add(id);
+    renderSkills();
+    storeSettings();
+    return;
+  }
+  const id = Number(b.dataset.addSkill);
+  if (!data?.skillsById[id] || desired.some((d) => d.skillId === id)) return;
+  desired.push({ skillId: id, level: 1 });
+  renderDesired();
+  renderSkills();
+  renderDecos();
+  changed();
+});
+$("desired-list").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!b || active) return;
+  if (b.dataset.removeSkill) {
+    desired = desired.filter(
+      (s) => s.skillId !== Number(b.dataset.removeSkill),
+    );
+    renderDesired();
+    renderSkills();
+    $("skill-search").focus();
+  } else if (b.dataset.skillLevel) {
+    const d = desired.find((s) => s.skillId === Number(b.dataset.skillLevel));
+    if (d) d.level = Number(b.dataset.level);
+    renderDesired();
+  } else return;
+  changed();
+});
+$("desired-list").addEventListener("change", (event) => {
+  const i = event.target as HTMLInputElement;
+  if (i.dataset.optional) {
+    const d = desired.find((s) => s.skillId === Number(i.dataset.optional));
+    if (d) d.optional = i.checked;
+    changed();
+  }
+});
+$("example").addEventListener("click", () => {
+  if (!data) return;
+  desired = [
+    { skillId: 105, level: 3 },
+    { skillId: 102, level: 1 },
+  ].filter((s) => data!.skillsById[s.skillId]);
+  renderDesired();
+  renderSkills();
+  changed();
+});
+$("deco-search").addEventListener("input", renderDecos);
+$("owned-decos").addEventListener("change", () => {
+  renderDecos();
+  changed();
+});
+$("deco-list").addEventListener("change", (event) => {
+  const i = event.target as HTMLInputElement;
+  if (i.dataset.deco) {
+    const id = Number(i.dataset.deco);
+    i.checked ? selected.add(id) : selected.delete(id);
+  }
+  if (i.dataset.count) {
+    const id = Number(i.dataset.count);
+    counts[id] = Math.max(0, Math.min(99, Math.floor(Number(i.value) || 0)));
+    if (counts[id] > 0) selected.add(id);
+  }
+  renderDecos();
+  changed();
+});
+$("deco-list").addEventListener("input", (event) => {
+  const input = event.target as HTMLInputElement;
+  if (!input.dataset.count) return;
+  const id = Number(input.dataset.count);
+  counts[id] = Math.max(0, Math.min(99, Math.floor(Number(input.value) || 0)));
+  if (counts[id] > 0) selected.add(id);
+  changed();
+});
+$("deco-all").addEventListener("click", () => {
+  usableDecorations().forEach((d) => selected.add(d.id));
+  renderDecos();
+  changed();
+});
+$("deco-none").addEventListener("click", () => {
+  selected.clear();
+  renderDecos();
+  changed();
+});
+$("armor-locks").addEventListener("change", (event) => {
+  const e = event.target as HTMLSelectElement,
+    k = e.dataset.lock as ArmorKind;
+  if (e.value) locks[k] = Number(e.value);
+  else delete locks[k];
+  changed();
+});
+$("excluded").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    "button[data-include]",
+  );
+  if (b) {
+    exclusions.delete(Number(b.dataset.include));
+    renderEquipment();
+    changed();
+  }
+});
+$("override-save").addEventListener("click", () => {
+  try {
+    if (!data) return;
+    if (
+      value("override-state") === "Transcended" &&
+      integer("hr", 1, 999) < 100
+    )
+      throw new Error("Transcendence requires HR100.");
+    overrides[Number(value("override-piece"))] = {
+      defense: integer("override-defense", 0, 999),
+      slots: slots(value("override-slots")),
+      state: value("override-state"),
+    };
+    renderEquipment();
+    changed();
+  } catch (e) {
+    status(e instanceof Error ? e.message : String(e));
+  }
+});
+$("override-clear").addEventListener("click", () => {
+  overrides = {};
+  renderEquipment();
+  changed();
+});
+$("weapon-add").addEventListener("click", () => {
+  const id = Number(value("weapon-skill"));
+  if (!data?.skillsById[id]) return;
+  weaponSkills[id] = integer("weapon-level", 1, data.skillsById[id].maxLevel);
+  renderEquipment();
+  changed();
+});
+$("weapon-skills").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (b) {
+    delete weaponSkills[Number(b.dataset.removeWeapon)];
+    renderEquipment();
+    changed();
+  }
+});
+$("mode").addEventListener("change", () => {
+  renderMode();
+  renderDecos();
+  changed();
+});
+for (const id of [
+  "alpha",
+  "gamma",
+  "workers",
+  "result-limit",
+  "missing",
+  "sort",
+  "armor-rank",
+  "rarity",
+  "upgrade",
+  "hr",
+  "weapon-set",
+  "weapon-group",
+  "weapon-slots",
+  "flex-preset",
+])
+  $(id).addEventListener("change", () => {
+    if (id === "weapon-slots") renderDecos();
+    changed();
+  });
+$("locale").addEventListener("change", () => {
+  changed();
+  void load();
+});
+$("refresh-data").addEventListener("click", () => {
+  changed();
+  void load(true);
+});
+$("optimize").addEventListener("click", () => void search());
+$("stop").addEventListener("click", () => active?.cancel());
+$("copy-link").addEventListener("click", () => {
+  try {
+    void copy(share());
+  } catch (e) {
+    status(String(e));
+  }
+});
+$("more-results").addEventListener("click", () => {
+  visibleResults += 10;
+  renderResults();
+});
+$("results").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!b || active || stale) return;
+  if (b.dataset.exclude) {
+    exclusions.add(Number(b.dataset.exclude));
+    renderEquipment();
+    changed();
+    return;
+  }
+  if (b.dataset.lockResult !== undefined) {
+    const r = results[Number(b.dataset.lockResult)],
+      k = b.dataset.kind as ArmorKind;
+    locks[k] = r.armor[k];
+    renderEquipment();
+    changed();
+    return;
+  }
+  const index = Number(
+      b.dataset.pin ?? b.dataset.save ?? b.dataset.export ?? b.dataset.share,
+    ),
+    r = results[index];
+  if (!r) return;
+  if (b.dataset.pin !== undefined) {
+    pins = pins.some((p) => p.tieKey === r.tieKey)
+      ? pins.filter((p) => p.tieKey !== r.tieKey)
+      : [...pins.slice(-2), r];
+    renderResults();
+  }
+  if (b.dataset.save !== undefined) {
+    const name = prompt("Name this build", `Build ${saved.length + 1}`);
+    if (!name) return;
+    const entry: SavedBuild = {
+        id: crypto.randomUUID(),
+        name,
+        version: data!.version,
+        locale: data!.locale,
+        build: r,
+      },
+      next = [entry, ...saved].slice(0, 50);
+    if (writeSavedBuilds(next)) {
+      saved = next;
+      renderSaved();
+      status("Build saved on this device.");
+    } else status("Could not save. Download its checklist instead.");
+  }
+  if (b.dataset.export !== undefined)
+    downloadText(
+      "mh-wilds-build.txt",
+      buildChecklist(r, resultData!),
+      "text/plain",
+    );
+  if (b.dataset.share !== undefined) {
+    try {
+      void copy(share(r));
+    } catch (e) {
+      status(String(e));
+    }
+  }
+});
+$("results").addEventListener(
   "toggle",
   (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLDetailsElement)) {
+    const details = event.target as HTMLDetailsElement;
+    if (!details.open || details.dataset.flex === undefined || !data || stale)
       return;
-    }
-    if (!target.classList.contains("flex-suggestion-lazy") || !target.open) {
-      return;
-    }
-    const resultKey = target.dataset.flexResultKey;
-    if (!resultKey || flexRenderCache.has(resultKey)) {
-      return;
-    }
-    const result = state.results.find((entry) => entry.tieKey === resultKey);
-    if (!result) {
-      return;
-    }
-    const body = target.querySelector<HTMLDivElement>(".flex-suggestion-lazy-body");
-    if (!body) {
-      return;
-    }
-    body.innerHTML = `<p class="muted">Generating flex suggestions...</p>`;
-    body.innerHTML = renderFlexSuggestions(result);
+    const body = details.querySelector(".flex-body")!,
+      r = results[Number(details.dataset.flex)];
+    if (!r) return;
+    const available = pieceSlots(r).filter(
+      (s) =>
+        s.kind === "armor" &&
+        !r.placements.some(
+          (p) =>
+            p.piece === s.piece &&
+            p.slotKind === s.kind &&
+            p.slotIndex === s.index,
+        ),
+    );
+    const leftover: LeftoverSlot[] = available.map((s, i) => ({
+        slotIndex: i,
+        slotLevel: s.size,
+        pieceLabel: s.piece,
+        pieceName: s.name,
+      })),
+      stock = checked("owned-decos") ? { ...counts } : undefined;
+    if (stock)
+      for (const p of r.placements)
+        stock[p.decorationId] = (stock[p.decorationId] ?? 0) - 1;
+    const suggestions = suggestFlexDecorations({
+      build: r,
+      leftoverSlots: leftover,
+      data: resultData!,
+      desiredSkills: desired,
+      presetMode: value("flex-preset") as FlexPresetMode,
+      huntFocus: null,
+      allowedDecorationIds: selected,
+      decorationCounts: stock,
+    });
+    body.innerHTML =
+      suggestions
+        .map(
+          (s) =>
+            `<p>${esc(s.explanation)}</p><ul>${s.decorationLoadout.map((p) => `<li>${esc(p.pieceLabel)} [${p.slotLevel}]: ${esc(p.decorationName)}</li>`).join("")}</ul>`,
+        )
+        .join("") || "<p>No useful placements from this inventory.</p>";
   },
   true,
 );
-el.flexPreset.addEventListener("change", () => {
-  const value = el.flexPreset.value as FlexPresetMode;
-  state.flexPresetMode = ["auto", "comfort", "balanced", "damage"].includes(value) ? value : "auto";
-  clearFlexRenderCache();
-  renderResults();
-});
-el.huntElement.addEventListener("change", () => {
-  const value = el.huntElement.value as HuntElement | "";
-  state.huntElement = HUNT_ELEMENT_OPTIONS.includes(value as HuntElement) ? (value as HuntElement) : "";
-  clearFlexRenderCache();
-  renderResults();
-});
-for (const input of huntStatusInputs) {
-  input.addEventListener("change", () => {
-    const next = new Set<HuntStatus>();
-    for (const statusInput of huntStatusInputs) {
-      if (!statusInput.checked) continue;
-      const status = statusInput.dataset.huntStatus as HuntStatus | undefined;
-      if (status && HUNT_STATUS_OPTIONS.includes(status)) {
-        next.add(status);
-      }
-    }
-    state.huntStatuses = next;
-    clearFlexRenderCache();
-    renderResults();
-  });
-}
-el.optimize.addEventListener("click", () => optimize().catch(() => undefined));
-el.stop.addEventListener("click", () => cancelOptimization());
-el.copyLink.addEventListener("click", async () => {
-  const url = shareUrl();
-  try {
-    await navigator.clipboard.writeText(url);
-    state.runStatus = "Share link copied.";
-  } catch {
-    state.runStatus = url;
+$("saved-builds").addEventListener("click", (event) => {
+  const b = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!b) return;
+  if (b.dataset.openSaved !== undefined)
+    showSaved(saved[Number(b.dataset.openSaved)]);
+  if (b.dataset.exportSaved !== undefined)
+    downloadText(
+      "mh-wilds-saved-build.json",
+      JSON.stringify(saved[Number(b.dataset.exportSaved)], null, 2),
+    );
+  if (b.dataset.deleteSaved !== undefined) {
+    const next = saved.filter((_, i) => i !== Number(b.dataset.deleteSaved));
+    if (writeSavedBuilds(next)) {
+      saved = next;
+      renderSaved();
+    } else status("Could not save the library change.");
   }
-  renderResults();
 });
-
-load(false).catch(() => undefined);
-
+$("inventory-file").addEventListener("change", async (event) => {
+  const input = event.target as HTMLInputElement,
+    file = input.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 1_000_000) throw new Error("Use a file smaller than 1 MB.");
+    const imported = normalizeInventory(
+        JSON.parse(await file.text()),
+        data?.skills,
+      ),
+      next =
+        value("import-mode") === "replace" ? imported : [...owned, ...imported];
+    if (!saveInventory(next))
+      throw new Error(
+        "Storage unavailable or full. Existing inventory remains saved.",
+      );
+    owned = next;
+    renderMode();
+    renderDecos();
+    changed();
+    status(
+      `Imported ${imported.length} talismans; ${owned.length} total. Previous library backed up.`,
+    );
+  } catch (e) {
+    status(e instanceof Error ? e.message : String(e));
+  } finally {
+    input.value = "";
+  }
+});
+$("inventory-export").addEventListener("click", () =>
+  downloadText("mh-wilds-talismans.json", JSON.stringify(owned, null, 2)),
+);
+$("inventory-backup").addEventListener("click", () => {
+  try {
+    owned = restoreInventory();
+    renderMode();
+    changed();
+    status("Previous inventory restored.");
+  } catch (e) {
+    status(e instanceof Error ? e.message : String(e));
+  }
+});
+window.addEventListener("storage", (event) => {
+  if (event.key === STORAGE_KEY) {
+    owned = readInventory();
+    if (active) active.cancel();
+    renderMode();
+    renderDecos();
+    changed();
+  }
+});
+void load();

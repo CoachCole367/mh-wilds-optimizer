@@ -1,36 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap");
 
-:root.theme-mhwilds,
-body.theme-mhwilds {
-  --font-body: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  --font-head: Cinzel, Georgia, "Times New Roman", serif;
-  --font-mono: "IBM Plex Mono", Menlo, Consolas, monospace;
-
-  --bg: #0f1311;
-  --vignette: rgba(0, 0, 0, 0.58);
-  --panel: #f4ecdb;
-  --panel2: #e6dbc2;
-  --panelEdge: rgba(255, 246, 230, 0.95);
-  --panelInner: rgba(255, 249, 236, 0.62);
-  --border: #78664a;
-  --border2: #9b8761;
-
-  --text: #201e1a;
-  --muted: #5b5448;
-
-  --green: #2f6b4f;
-  --ember: #c76d2a;
-  --steel: #5f6670;
-  --danger: #b33a2f;
-
-  --focusRing: rgba(199, 109, 42, 0.34);
-  --chipBg: #fbf5e8;
-  --chipBorder: #9b8765;
-
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-  --shadowStrong: 0 24px 56px rgba(0, 0, 0, 0.46);
-  --radius: 13px;
-}
+@import "/theme.css";
 
 *,
 *::before,
@@ -561,3 +531,5 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+[hidden] { display: none !important; }

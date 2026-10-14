@@ -30,6 +30,8 @@ export type ArmorPiece = {
   armorSetName: string | null;
   isAlpha: boolean;
   isGamma: boolean;
+  rank?: string;
+  upgradeState?: "database" | "base" | "custom";
 };
 
 export type Decoration = {
@@ -48,6 +50,7 @@ export type CharmRank = {
   rarity: number;
   skills: SkillPoints;
   slots: Slots;
+  weaponSlots?: Slots;
 };
 
 export type ArmorSetBonusRank = {
@@ -91,6 +94,7 @@ export type NormalizedData = {
 export type DesiredSkill = {
   skillId: SkillId;
   level: number;
+  optional?: boolean;
 };
 
 export type Charm = {
@@ -111,6 +115,9 @@ export type CharmSuggestion = {
 export type DecorationPlacement = {
   slotSizeUsed: SlotSize;
   decorationId: number;
+  slotKind?: "armor" | "weapon";
+  piece?: ArmorKind | "charm" | "weapon";
+  slotIndex?: number;
 };
 
 export type BuildResult = {
@@ -127,6 +134,12 @@ export type BuildResult = {
   wastedRequestedPoints: number;
   missingRequestedPoints?: number;
   tieKey: string;
+  equippedCharm?: CharmRank;
+  optionalSkillPoints?: number;
+  weaponGroupBonusId?: number;
+  weaponSlots?: Slots;
+  weaponSkills?: SkillPoints;
+  armorPieces?: Record<ArmorKind, ArmorPiece>;
   suggestedCharms?: CharmSuggestion[];
   charmSuggestions?: CharmSuggestion[];
   bestSuggestedCharm?: CharmSuggestion | null;
@@ -155,6 +168,24 @@ export type OptimizeWorkerRequest = {
   maxMissingPoints?: number;
   allowedHeadIds: number[];
   weaponSetBonusPieces?: WeaponSetBonusPieces;
+  weaponGroupBonusPieces?: Record<string, number>;
+  weaponSlots?: Slots;
+  weaponSkills?: SkillPoints;
+  charmPool?: CharmRank[];
+  decorationCounts?: Record<number, number>;
+  armorConstraints?: Partial<Record<ArmorKind, number[]>>;
+  maxRarity?: number;
+  armorRank?: string;
+  armorUpgradeMode?: "base" | "database";
+  prepared?: boolean;
+  sortMode?:
+    | "defense"
+    | "slots"
+    | "fire"
+    | "water"
+    | "ice"
+    | "thunder"
+    | "dragon";
 };
 
 export type WorkerStats = {
